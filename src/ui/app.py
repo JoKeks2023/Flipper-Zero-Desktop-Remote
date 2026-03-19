@@ -62,6 +62,7 @@ def run(page: ft.Page) -> None:
     selected_module = str(settings.get("start_module", "System"))
     if selected_module not in module_order:
         selected_module = "System"
+    selected_main_view = 0
 
     def accent_color() -> str:
         mapping = {
@@ -247,12 +248,7 @@ def run(page: ft.Page) -> None:
         max_lines=9,
     )
 
-    main_tabs = ft.Tabs(
-        content=ft.Row([ft.Tab(label="Home"), ft.Tab(label="Module"), ft.Tab(label="Settings")]),
-        length=3,
-        selected_index=0,
-        animation_duration=150,
-    )
+    main_nav_container = ft.Container()
     module_tabs = ft.Tabs(
         content=ft.Row([ft.Tab(label=name) for name in module_order]),
         length=len(module_order),
@@ -418,14 +414,45 @@ def run(page: ft.Page) -> None:
         return capability.hint if capability else "Feature-Zustand unbekannt"
 
     def switch_to_settings(_: ft.ControlEvent) -> None:
-        main_tabs.selected_index = 2
+        nonlocal selected_main_view
+        selected_main_view = 2
         refresh_main_view()
         page.update()
 
     def back_to_home(_: ft.ControlEvent) -> None:
-        main_tabs.selected_index = 0
+        nonlocal selected_main_view
+        selected_main_view = 0
         refresh_main_view()
         page.update()
+
+    def on_main_nav_click(index: int) -> None:
+        nonlocal selected_main_view
+        selected_main_view = index
+        refresh_main_view()
+        page.update()
+
+    def build_main_nav() -> ft.Control:
+        controls: list[ft.Control] = []
+        entries = [("Übersicht", 0), ("Module", 1), ("Einstellungen", 2)]
+        for label, index in entries:
+            is_active = selected_main_view == index
+            if is_active:
+                controls.append(
+                    ft.ElevatedButton(
+                        label,
+                        on_click=lambda _, idx=index: on_main_nav_click(idx),
+                        height=control_height(),
+                    )
+                )
+            else:
+                controls.append(
+                    ft.OutlinedButton(
+                        label,
+                        on_click=lambda _, idx=index: on_main_nav_click(idx),
+                        height=control_height(),
+                    )
+                )
+        return ft.Row(wrap=True, spacing=8, run_spacing=8, controls=controls)
 
     def disabled_feature_panel(module_name: str, feature_key: str) -> ft.Control:
         return panel_card(
@@ -631,10 +658,10 @@ def run(page: ft.Page) -> None:
         status_color = ft.Colors.GREEN_400 if enabled else ft.Colors.GREY_500
 
         def open_module(_: ft.ControlEvent) -> None:
-            nonlocal selected_module
+            nonlocal selected_module, selected_main_view
             selected_module = module_name
             module_tabs.selected_index = module_order.index(module_name)
-            main_tabs.selected_index = 1
+            selected_main_view = 1
             settings["start_module"] = module_name
             start_module_dropdown.value = module_name
             config_store.save_settings(settings)
@@ -1363,7 +1390,7 @@ def run(page: ft.Page) -> None:
         return ft.Column(
             spacing=spacing_value(),
             controls=[
-                ft.Text("Settings", size=23, weight=ft.FontWeight.BOLD),
+                ft.Text("Einstellungen", size=23, weight=ft.FontWeight.BOLD),
                 connection_card,
                 ui_card,
                 debug_card,
@@ -1372,7 +1399,8 @@ def run(page: ft.Page) -> None:
         )
 
     def refresh_main_view() -> None:
-        selected = main_tabs.selected_index or 0
+        main_nav_container.content = build_main_nav()
+        selected = selected_main_view
         if selected == 0:
             main_content.content = build_home_view()
         elif selected == 1:
@@ -1380,10 +1408,6 @@ def run(page: ft.Page) -> None:
             main_content.content = build_module_view()
         else:
             main_content.content = build_settings_view()
-
-    def on_main_tab_change(_: ft.ControlEvent) -> None:
-        refresh_main_view()
-        page.update()
 
     def on_module_tab_change(_: ft.ControlEvent) -> None:
         nonlocal selected_module
@@ -1396,7 +1420,6 @@ def run(page: ft.Page) -> None:
         refresh_main_view()
         page.update()
 
-    main_tabs.on_change = on_main_tab_change
     module_tabs.on_change = on_module_tab_change
     expert_mode_checkbox.on_change = on_expert_mode_change
     theme_dropdown.on_change = on_theme_change
@@ -1411,7 +1434,7 @@ def run(page: ft.Page) -> None:
                 header,
                 subtitle,
                 ft.Divider(height=1, color=accent_color()),
-                main_tabs,
+                main_nav_container,
                 main_content,
             ],
         )
