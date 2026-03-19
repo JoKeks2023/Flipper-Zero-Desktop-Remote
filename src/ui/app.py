@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import flet as ft
 
@@ -134,7 +135,7 @@ def run(page: ft.Page) -> None:
     )
 
     log_console = ft.TextField(
-        label="Debug Log",
+        label="Aktivitäten",
         multiline=True,
         min_lines=12,
         max_lines=12,
@@ -142,7 +143,7 @@ def run(page: ft.Page) -> None:
         value="",
     )
     mini_log_console = ft.TextField(
-        label="Letzte Logs",
+        label="Letzte Aktivitäten",
         multiline=True,
         min_lines=6,
         max_lines=6,
@@ -150,22 +151,97 @@ def run(page: ft.Page) -> None:
         value="",
     )
 
-    system_path_input = ft.TextField(label="Storage Pfad", value="/", width=320)
-    storage_list_path_input = ft.TextField(label="Listen-Pfad", value="/", width=320)
-    storage_mkdir_path = ft.TextField(label="Ordner erstellen", value="/ext/new_folder", width=320)
-    storage_remove_path = ft.TextField(label="Datei/Ordner löschen", value="/ext/old_file.txt", width=320)
-    storage_read_path = ft.TextField(label="Datei anzeigen (read)", value="/ext/notes.txt", width=320)
+    common_path_options = ["/", "/ext", "/ext/apps", "/ext/infrared", "/ext/nfc", "/ext/subghz", "/ext/badusb"]
 
-    ir_file_path = ft.TextField(label="IR-Datei", value="/ext/infrared/example.ir", width=360)
-    nfc_file_path = ft.TextField(label="NFC-Datei (optional)", value="/ext/nfc/example.nfc", width=360)
-    subghz_file_path = ft.TextField(label="Sub-GHz-Datei (optional)", value="/ext/subghz/example.sub", width=360)
-    badusb_script_path = ft.TextField(label="BadUSB Script-Pfad", value="/ext/badusb/script.txt", width=360)
+    system_path_input = ft.Dropdown(
+        label="Ordner",
+        width=320,
+        value="/",
+        options=[ft.dropdown.Option(path) for path in common_path_options],
+    )
+    storage_list_path_input = ft.Dropdown(
+        label="Ordner",
+        width=320,
+        value="/",
+        options=[ft.dropdown.Option(path) for path in common_path_options],
+    )
+    storage_mkdir_path = ft.Dropdown(
+        label="Neuer Ordner",
+        width=320,
+        value="/ext/new_folder",
+        options=[
+            ft.dropdown.Option("/ext/new_folder"),
+            ft.dropdown.Option("/ext/apps/new_folder"),
+            ft.dropdown.Option("/ext/infrared/new_folder"),
+        ],
+    )
+    storage_remove_path = ft.Dropdown(
+        label="Element löschen",
+        width=320,
+        value="/ext/old_file.txt",
+        options=[
+            ft.dropdown.Option("/ext/old_file.txt"),
+            ft.dropdown.Option("/ext/notes.txt"),
+            ft.dropdown.Option("/ext/new_folder"),
+        ],
+    )
+    storage_read_path = ft.Dropdown(
+        label="Datei",
+        width=320,
+        value="/ext/notes.txt",
+        options=[
+            ft.dropdown.Option("/ext/notes.txt"),
+            ft.dropdown.Option("/ext/infrared/example.ir"),
+            ft.dropdown.Option("/ext/badusb/script.txt"),
+        ],
+    )
+
+    ir_file_path = ft.Dropdown(
+        label="IR-Datei",
+        width=360,
+        value="/ext/infrared/example.ir",
+        options=[
+            ft.dropdown.Option("/ext/infrared/example.ir"),
+            ft.dropdown.Option("/ext/infrared/tv.ir"),
+            ft.dropdown.Option("/ext/infrared/ac.ir"),
+        ],
+    )
+    nfc_file_path = ft.Dropdown(
+        label="NFC-Datei",
+        width=360,
+        value="/ext/nfc/example.nfc",
+        options=[
+            ft.dropdown.Option("/ext/nfc/example.nfc"),
+            ft.dropdown.Option("/ext/nfc/card1.nfc"),
+            ft.dropdown.Option("/ext/nfc/card2.nfc"),
+        ],
+    )
+    subghz_file_path = ft.Dropdown(
+        label="Funk-Datei",
+        width=360,
+        value="/ext/subghz/example.sub",
+        options=[
+            ft.dropdown.Option("/ext/subghz/example.sub"),
+            ft.dropdown.Option("/ext/subghz/garage.sub"),
+            ft.dropdown.Option("/ext/subghz/doorbell.sub"),
+        ],
+    )
+    badusb_script_path = ft.Dropdown(
+        label="Ablauf-Datei",
+        width=360,
+        value="/ext/badusb/script.txt",
+        options=[
+            ft.dropdown.Option("/ext/badusb/script.txt"),
+            ft.dropdown.Option("/ext/badusb/test.txt"),
+            ft.dropdown.Option("/ext/badusb/demo.txt"),
+        ],
+    )
     badusb_confirm = ft.Checkbox(label="Ich bestätige kontrollierte/legitime Nutzung", value=False)
 
     macro_select = ft.Dropdown(label="Gespeichertes Makro", width=280, options=[])
     macro_name_input = ft.TextField(label="Makro-Name", width=280)
     macro_commands_input = ft.TextField(
-        label="Makro-Befehle (eine Zeile = ein Befehl)",
+        label="Makro-Schritte (eine Zeile = ein Schritt)",
         multiline=True,
         min_lines=7,
         max_lines=9,
@@ -186,6 +262,17 @@ def run(page: ft.Page) -> None:
 
     main_content = ft.Container(expand=True)
     module_panel_content = ft.Container(expand=True)
+    scan_status_text = ft.Text("Dateien: nicht geladen", color=muted_color(), size=12)
+
+    scan_dirs = ["/ext", "/ext/infrared", "/ext/nfc", "/ext/subghz", "/ext/badusb"]
+    storage_scan_active = False
+    storage_scan_current_dir = ""
+    storage_scan_last_activity = 0.0
+    storage_scan_paths: set[str] = set()
+    ir_paths: set[str] = set()
+    nfc_paths: set[str] = set()
+    subghz_paths: set[str] = set()
+    badusb_paths: set[str] = set()
 
     def notify(message: str, error: bool = False) -> None:
         page.snack_bar = ft.SnackBar(
@@ -198,11 +285,105 @@ def run(page: ft.Page) -> None:
         log_console.value = "\n".join(log_lines)
         mini_log_console.value = "\n".join(log_lines[-60:])
 
+    def set_scan_status(message: str, error: bool = False) -> None:
+        scan_status_text.value = message
+        scan_status_text.color = ft.Colors.RED_300 if error else muted_color()
+
     def append_log(line: str) -> None:
         log_lines.append(line)
         if len(log_lines) > max_log_lines:
             del log_lines[: len(log_lines) - max_log_lines]
         update_log_views()
+
+    def set_dropdown_values(dropdown: ft.Dropdown, values: set[str], fallback: str) -> None:
+        merged = sorted({value for value in values if value} | {fallback})
+        dropdown.options = [ft.dropdown.Option(value) for value in merged]
+        if not dropdown.value or str(dropdown.value) not in merged:
+            dropdown.value = merged[0]
+
+    def apply_scanned_paths() -> None:
+        if storage_scan_paths:
+            set_dropdown_values(storage_remove_path, storage_scan_paths, "/ext/old_file.txt")
+            set_dropdown_values(storage_read_path, storage_scan_paths, "/ext/notes.txt")
+
+        if ir_paths:
+            set_dropdown_values(ir_file_path, ir_paths, "/ext/infrared/example.ir")
+        if nfc_paths:
+            set_dropdown_values(nfc_file_path, nfc_paths, "/ext/nfc/example.nfc")
+        if subghz_paths:
+            set_dropdown_values(subghz_file_path, subghz_paths, "/ext/subghz/example.sub")
+        if badusb_paths:
+            set_dropdown_values(badusb_script_path, badusb_paths, "/ext/badusb/script.txt")
+
+    def normalize_storage_path(current_dir: str, entry: str) -> str:
+        value = entry.strip().strip('"').strip("'")
+        if not value or value in {".", ".."}:
+            return ""
+        if value.startswith("/"):
+            return value
+        return f"{current_dir.rstrip('/')}/{value}"
+
+    def extract_storage_entry(line: str) -> str:
+        text = line.strip()
+        if not text:
+            return ""
+        if text.startswith(">") or text.startswith("["):
+            return ""
+        lowered = text.lower()
+        if "storage" in lowered and ("error" in lowered or "usage" in lowered):
+            return ""
+
+        tokens = text.replace("\t", " ").split()
+        if not tokens:
+            return ""
+        candidate = tokens[-1]
+        return "" if candidate in {"-", "|"} else candidate
+
+    def process_scan_line(line: str) -> None:
+        nonlocal storage_scan_current_dir, storage_scan_last_activity, storage_scan_active
+        if not storage_scan_active:
+            return
+
+        storage_scan_last_activity = time.time()
+        stripped = line.strip()
+        if stripped.startswith("> storage list "):
+            storage_scan_current_dir = stripped.replace("> storage list ", "", 1).strip() or "/"
+            return
+        if stripped.startswith(">"):
+            return
+        if not storage_scan_current_dir:
+            return
+
+        entry = extract_storage_entry(stripped)
+        if not entry:
+            return
+        full_path = normalize_storage_path(storage_scan_current_dir, entry)
+        if not full_path or full_path.endswith("/"):
+            return
+
+        storage_scan_paths.add(full_path)
+        lower_path = full_path.lower()
+        if lower_path.endswith(".ir") or "/infrared/" in lower_path:
+            ir_paths.add(full_path)
+        if lower_path.endswith(".nfc") or "/nfc/" in lower_path:
+            nfc_paths.add(full_path)
+        if lower_path.endswith(".sub") or "/subghz/" in lower_path:
+            subghz_paths.add(full_path)
+        if lower_path.endswith(".txt") or "/badusb/" in lower_path:
+            badusb_paths.add(full_path)
+
+    def finish_scan_if_idle() -> None:
+        nonlocal storage_scan_active
+        if not storage_scan_active:
+            return
+        if (time.time() - storage_scan_last_activity) < 1.2:
+            return
+        storage_scan_active = False
+        apply_scanned_paths()
+        found_total = len(storage_scan_paths)
+        set_scan_status(f"Dateien gefunden: {found_total}")
+        notify("Dateiliste aktualisiert")
+        page.update()
 
     def update_connection_status() -> None:
         if serial_client.is_connected:
@@ -238,6 +419,11 @@ def run(page: ft.Page) -> None:
 
     def switch_to_settings(_: ft.ControlEvent) -> None:
         main_tabs.selected_index = 2
+        refresh_main_view()
+        page.update()
+
+    def back_to_home(_: ft.ControlEvent) -> None:
+        main_tabs.selected_index = 0
         refresh_main_view()
         page.update()
 
@@ -287,10 +473,35 @@ def run(page: ft.Page) -> None:
             append_log("[WARN] Keine passenden Flipper-Ports gefunden")
             notify("Keine passenden Flipper-Ports gefunden", error=True)
 
+    def refresh_file_lists(_: ft.ControlEvent | None = None) -> None:
+        nonlocal storage_scan_active, storage_scan_current_dir, storage_scan_last_activity
+
+        def start_scan() -> None:
+            nonlocal storage_scan_active, storage_scan_current_dir, storage_scan_last_activity
+            storage_scan_active = True
+            storage_scan_current_dir = ""
+            storage_scan_last_activity = time.time()
+            storage_scan_paths.clear()
+            ir_paths.clear()
+            nfc_paths.clear()
+            subghz_paths.clear()
+            badusb_paths.clear()
+            for directory in scan_dirs:
+                api.storage_list(directory)
+
+        success = guarded_call(FEATURE_STORAGE, start_scan, "Dateien werden geladen")
+        if success:
+            append_log("[INFO] Dateiliste wird vom Flipper aktualisiert")
+            set_scan_status("Dateien werden geladen …")
+        else:
+            set_scan_status("Dateien nicht geladen", error=True)
+        page.update()
+
     def connect_selected_port() -> None:
         selected_port = (port_dropdown.value or "").strip()
         if not selected_port:
             append_log("[WARN] Bitte zuerst einen Port auswählen")
+            notify("Bitte zuerst einen Port auswählen", error=True)
             return
         try:
             serial_client.connect(selected_port)
@@ -306,6 +517,7 @@ def run(page: ft.Page) -> None:
     def disconnect() -> None:
         serial_client.disconnect()
         update_connection_status()
+        set_scan_status("Dateien: nicht geladen")
         notify("Verbindung getrennt")
 
     def refresh_macro_dropdown() -> None:
@@ -328,7 +540,7 @@ def run(page: ft.Page) -> None:
             page.update()
             return
         if not commands:
-            append_log("[WARN] Makro enthält keine Befehle")
+            append_log("[WARN] Makro enthält keine Schritte")
             page.update()
             return
 
@@ -381,7 +593,7 @@ def run(page: ft.Page) -> None:
 
         success = guarded_call(FEATURE_MACROS, execute, f"Makro gestartet: {selected}")
         if success:
-            append_log(f"[INFO] Makro gestartet: {selected} ({len(commands)} Befehle)")
+            append_log(f"[INFO] Makro gestartet: {selected} ({len(commands)} Schritte)")
         page.update()
 
     def run_macro_by_name(name: str) -> None:
@@ -399,10 +611,18 @@ def run(page: ft.Page) -> None:
 
             success = guarded_call(FEATURE_MACROS, execute, f"Makro gestartet: {name}")
             if success:
-                append_log(f"[INFO] Makro gestartet: {name} ({len(commands)} Befehle)")
+                append_log(f"[INFO] Makro gestartet: {name} ({len(commands)} Schritte)")
         else:
             append_log(f"[WARN] Makro nicht gefunden: {name}")
             notify(f"Makro nicht gefunden: {name}", error=True)
+
+    def required_path(value: str, label: str) -> str | None:
+        clean = (value or "").strip()
+        if clean:
+            return clean
+        append_log(f"[WARN] {label} fehlt")
+        notify(f"{label} fehlt", error=True)
+        return None
 
     def module_card(module_name: str, icon: ft.IconData) -> ft.Control:
         feature_key = module_to_feature[module_name]
@@ -450,8 +670,8 @@ def run(page: ft.Page) -> None:
         ]
 
         quick_actions = panel_card(
-            "Quick Actions",
-            "Schnellbefehle direkt vom Dashboard.",
+            "Schnellaktionen",
+            "Schnellaktionen direkt vom Dashboard.",
             [
                 ft.Row(
                     wrap=True,
@@ -459,27 +679,27 @@ def run(page: ft.Page) -> None:
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "Device Info",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info, "Device Info angefragt"), page.update()),
+                            "Geräteinfo",
+                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info, "Geräteinfo geladen"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
                             "Vibro Test",
                             on_click=lambda _: (
-                                guarded_call(FEATURE_SYSTEM, lambda: api.vibro(True)),
-                                guarded_call(FEATURE_SYSTEM, lambda: api.vibro(False)),
+                                guarded_call(FEATURE_SYSTEM, lambda: api.vibro(True), "Vibro an"),
+                                guarded_call(FEATURE_SYSTEM, lambda: api.vibro(False), "Vibro aus"),
                                 page.update(),
                             ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Storage /",
-                            on_click=lambda _: (guarded_call(FEATURE_STORAGE, lambda: api.storage_list("/"), "Storage / gelistet"), page.update()),
+                            "Dateien anzeigen",
+                            on_click=lambda _: (guarded_call(FEATURE_STORAGE, lambda: api.storage_list("/"), "Dateien geladen"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Reboot",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.reboot_normal, "Reboot ausgelöst"), page.update()),
+                            "Neu starten",
+                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.reboot_normal, "Neustart ausgelöst"), page.update()),
                             height=control_height(),
                         ),
                     ],
@@ -497,17 +717,17 @@ def run(page: ft.Page) -> None:
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "OK short",
-                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("ok", "short"), "OK short gesendet"), page.update()),
+                            "OK",
+                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("ok", "short"), "OK ausgelöst"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
                             "Back",
-                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("back", "short"), "Back gesendet"), page.update()),
+                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("back", "short"), "Zurück ausgelöst"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Macro: Status",
+                            "Makro: Status",
                             on_click=lambda _: (run_macro_by_name("Status"), page.update()),
                             height=control_height(),
                         ),
@@ -516,7 +736,7 @@ def run(page: ft.Page) -> None:
             ],
         )
 
-        log_card = panel_card("Mini Log", "Live-Output für schnellen Überblick.", [mini_log_console])
+        log_card = panel_card("Aktivitäten", "Rückmeldungen für schnellen Überblick.", [mini_log_console])
 
         return ft.Column(
             spacing=spacing_value(),
@@ -532,7 +752,7 @@ def run(page: ft.Page) -> None:
 
     def build_system_module() -> ft.Control:
         return panel_card(
-            "System & Diagnose",
+            "System & Übersicht",
             feature_hint(FEATURE_SYSTEM),
             [
                 ft.Row(
@@ -541,17 +761,18 @@ def run(page: ft.Page) -> None:
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "Device Info",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info, "Device Info angefragt"), page.update()),
+                            "Geräteinfo",
+                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info, "Geräteinfo geladen"), page.update()),
                             height=control_height(),
                         ),
+                        system_path_input,
                         ft.OutlinedButton(
-                            "Storage Pfad listen",
+                            "Ordner anzeigen",
                             on_click=lambda _: (
                                 guarded_call(
                                     FEATURE_STORAGE,
                                     lambda: api.storage_list(system_path_input.value or "/"),
-                                    f"Storage gelistet: {system_path_input.value or '/'}",
+                                    f"Ordner geladen: {system_path_input.value or '/'}",
                                 ),
                                 page.update(),
                             ),
@@ -559,7 +780,6 @@ def run(page: ft.Page) -> None:
                         ),
                     ],
                 ),
-                system_path_input,
             ],
         )
 
@@ -582,7 +802,7 @@ def run(page: ft.Page) -> None:
         }
 
         return panel_card(
-            "Remote Control",
+            "Fernsteuerung",
             feature_hint(FEATURE_REMOTE),
             [
                 ft.Row(
@@ -593,7 +813,7 @@ def run(page: ft.Page) -> None:
                         ft.ElevatedButton(
                             label,
                             on_click=lambda _, key_name=key: (
-                                guarded_call(FEATURE_REMOTE, lambda: api.input_send(key_name, "short")),
+                                guarded_call(FEATURE_REMOTE, lambda: api.input_send(key_name, "short"), f"Taste ausgelöst: {key_name}"),
                                 page.update(),
                             ),
                             height=control_height(),
@@ -609,7 +829,7 @@ def run(page: ft.Page) -> None:
                         ft.OutlinedButton(
                             label,
                             on_click=lambda _, key_name=key: (
-                                guarded_call(FEATURE_REMOTE, lambda: api.input_long_with_fallback(key_name)),
+                                guarded_call(FEATURE_REMOTE, lambda: api.input_long_with_fallback(key_name), f"Langes Drücken: {key_name}"),
                                 page.update(),
                             ),
                             height=control_height(),
@@ -619,6 +839,91 @@ def run(page: ft.Page) -> None:
                 ),
             ],
         )
+
+    def on_storage_mkdir(_: ft.ControlEvent) -> None:
+        path = required_path(storage_mkdir_path.value, "Ordner-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_STORAGE, lambda: api.raw(f"storage mkdir {path}"), f"Ordner erstellt: {path}")
+        page.update()
+
+    def on_storage_remove(_: ft.ControlEvent) -> None:
+        path = required_path(storage_remove_path.value, "Lösch-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_STORAGE, lambda: api.raw(f"storage remove {path}"), f"Element gelöscht: {path}")
+        page.update()
+
+    def on_storage_read(_: ft.ControlEvent) -> None:
+        path = required_path(storage_read_path.value, "Anzeigen-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_STORAGE, lambda: api.raw(f"storage read {path}"), f"Dateiinhalt geladen: {path}")
+        page.update()
+
+    def on_ir_send(_: ft.ControlEvent) -> None:
+        path = required_path(ir_file_path.value, "IR-Datei-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_INFRARED, lambda: api.raw(f"ir tx {path}"), f"Signal gesendet: {path}")
+        page.update()
+
+    def on_ir_open(_: ft.ControlEvent) -> None:
+        path = required_path(ir_file_path.value, "IR-Datei-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_INFRARED, lambda: api.raw(f"storage read {path}"), "Dateiinhalt angezeigt")
+        page.update()
+
+    def on_nfc_emulate(_: ft.ControlEvent) -> None:
+        path = required_path(nfc_file_path.value, "NFC-Datei-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_NFC_RFID, lambda: api.raw(f"nfc emu {path}"), f"Emulation gestartet: {path}")
+        page.update()
+
+    def on_subghz_tx(_: ft.ControlEvent) -> None:
+        path = required_path(subghz_file_path.value, "Sub-GHz-Datei-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_SUBGHZ, lambda: api.raw(f"subghz tx_from_file {path}"), f"Senden gestartet: {path}")
+        page.update()
+
+    def on_subghz_open(_: ft.ControlEvent) -> None:
+        path = required_path(subghz_file_path.value, "Sub-GHz-Datei-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_SUBGHZ, lambda: api.raw(f"storage read {path}"), "Dateiinhalt angezeigt")
+        page.update()
+
+    def on_badusb_run(_: ft.ControlEvent) -> None:
+        if not badusb_confirm.value:
+            append_log("[WARN] Bestätigung fehlt")
+            notify("Bitte zuerst BadUSB-Bestätigung aktivieren", error=True)
+            page.update()
+            return
+        path = required_path(badusb_script_path.value, "BadUSB-Script-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_BADUSB, lambda: api.raw(f"badusb run {path}"), f"Ablauf gestartet: {path}")
+        page.update()
+
+    def on_badusb_open(_: ft.ControlEvent) -> None:
+        path = required_path(badusb_script_path.value, "BadUSB-Script-Pfad")
+        if not path:
+            page.update()
+            return
+        guarded_call(FEATURE_BADUSB, lambda: api.raw(f"storage read {path}"), "Ablaufinhalt angezeigt")
+        page.update()
 
     def build_storage_module() -> ft.Control:
         return panel_card(
@@ -630,19 +935,19 @@ def run(page: ft.Page) -> None:
                     spacing=8,
                     run_spacing=8,
                     controls=[
-                        storage_list_path_input,
                         ft.ElevatedButton(
-                            "List",
+                            "Anzeigen",
                             on_click=lambda _: (
                                 guarded_call(
                                     FEATURE_STORAGE,
                                     lambda: api.storage_list(storage_list_path_input.value or "/"),
-                                    f"Storage gelistet: {storage_list_path_input.value or '/'}",
+                                    f"Ordner geladen: {storage_list_path_input.value or '/'}",
                                 ),
                                 page.update(),
                             ),
                             height=control_height(),
                         ),
+                        storage_list_path_input,
                     ],
                 ),
                 ft.Row(
@@ -650,19 +955,12 @@ def run(page: ft.Page) -> None:
                     spacing=8,
                     run_spacing=8,
                     controls=[
+                        ft.OutlinedButton(
+                            "Ordner erstellen",
+                            on_click=on_storage_mkdir,
+                            height=control_height(),
+                        ),
                         storage_mkdir_path,
-                        ft.OutlinedButton(
-                            "Mkdir",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_STORAGE,
-                                    lambda: api.raw(f"storage mkdir {storage_mkdir_path.value.strip()}"),
-                                    f"Ordner erstellt: {storage_mkdir_path.value.strip()}",
-                                ),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        ),
                     ],
                 ),
                 ft.Row(
@@ -670,19 +968,12 @@ def run(page: ft.Page) -> None:
                     spacing=8,
                     run_spacing=8,
                     controls=[
+                        ft.OutlinedButton(
+                            "Löschen",
+                            on_click=on_storage_remove,
+                            height=control_height(),
+                        ),
                         storage_remove_path,
-                        ft.OutlinedButton(
-                            "Remove",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_STORAGE,
-                                    lambda: api.raw(f"storage remove {storage_remove_path.value.strip()}"),
-                                    f"Pfad entfernt: {storage_remove_path.value.strip()}",
-                                ),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        ),
                     ],
                 ),
                 ft.Row(
@@ -690,19 +981,12 @@ def run(page: ft.Page) -> None:
                     spacing=8,
                     run_spacing=8,
                     controls=[
-                        storage_read_path,
                         ft.OutlinedButton(
-                            "Read",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_STORAGE,
-                                    lambda: api.raw(f"storage read {storage_read_path.value.strip()}"),
-                                    f"Datei gelesen: {storage_read_path.value.strip()}",
-                                ),
-                                page.update(),
-                            ),
+                            "Inhalt anzeigen",
+                            on_click=on_storage_read,
                             height=control_height(),
                         ),
+                        storage_read_path,
                     ],
                 ),
             ],
@@ -710,39 +994,32 @@ def run(page: ft.Page) -> None:
 
     def build_infrared_module() -> ft.Control:
         return panel_card(
-            "Infrared",
+            "Infrarot",
             feature_hint(FEATURE_INFRARED),
             [
-                ir_file_path,
                 ft.Row(
                     wrap=True,
                     spacing=8,
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "Datei senden",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_INFRARED,
-                                    lambda: api.raw(f"ir tx {ir_file_path.value.strip()}"),
-                                    f"IR gesendet: {ir_file_path.value.strip()}",
-                                ),
-                                page.update(),
-                            ),
+                            "Signal senden",
+                            on_click=on_ir_send,
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
                             "Lernen starten",
-                            on_click=lambda _: (guarded_call(FEATURE_INFRARED, lambda: api.raw("ir rx"), "IR Lernmodus gestartet"), page.update()),
+                            on_click=lambda _: (guarded_call(FEATURE_INFRARED, lambda: api.raw("ir rx"), "Lernmodus gestartet"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Datei öffnen",
-                            on_click=lambda _: (guarded_call(FEATURE_INFRARED, lambda: api.raw(f"storage read {ir_file_path.value.strip()}"), "IR-Datei angezeigt"), page.update()),
+                            "Dateiinhalt anzeigen",
+                            on_click=on_ir_open,
                             height=control_height(),
                         ),
                     ],
                 ),
+                ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[ir_file_path]),
             ],
         )
 
@@ -751,87 +1028,66 @@ def run(page: ft.Page) -> None:
             "NFC/RFID",
             feature_hint(FEATURE_NFC_RFID),
             [
-                nfc_file_path,
                 ft.Row(
                     wrap=True,
                     spacing=8,
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "Detect",
+                            "Karte erkennen",
                             on_click=lambda _: (
-                                guarded_call(FEATURE_NFC_RFID, lambda: api.raw("nfc detect"), "NFC Detect gestartet"),
+                                guarded_call(FEATURE_NFC_RFID, lambda: api.raw("nfc detect"), "Erkennung gestartet"),
                                 page.update(),
                             ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Read",
-                            on_click=lambda _: (guarded_call(FEATURE_NFC_RFID, lambda: api.raw("nfc read"), "NFC Read gestartet"), page.update()),
+                            "Karte lesen",
+                            on_click=lambda _: (guarded_call(FEATURE_NFC_RFID, lambda: api.raw("nfc read"), "Lesen gestartet"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Emulate Datei",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_NFC_RFID,
-                                    lambda: api.raw(f"nfc emu {nfc_file_path.value.strip()}"),
-                                    f"NFC Emulation gestartet: {nfc_file_path.value.strip()}",
-                                ),
-                                page.update(),
-                            ),
+                            "Datei emulieren",
+                            on_click=on_nfc_emulate,
                             height=control_height(),
                         ),
                     ],
                 ),
+                ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[nfc_file_path]),
             ],
         )
 
     def build_subghz_module() -> ft.Control:
         return panel_card(
-            "Sub-GHz",
+            "Funk",
             feature_hint(FEATURE_SUBGHZ),
             [
-                subghz_file_path,
                 ft.Row(
                     wrap=True,
                     spacing=8,
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "RX starten",
+                            "Empfang starten",
                             on_click=lambda _: (
-                                guarded_call(FEATURE_SUBGHZ, lambda: api.raw("subghz rx"), "Sub-GHz RX gestartet"),
+                                guarded_call(FEATURE_SUBGHZ, lambda: api.raw("subghz rx"), "Empfang läuft"),
                                 page.update(),
                             ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "TX Datei",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_SUBGHZ,
-                                    lambda: api.raw(f"subghz tx {subghz_file_path.value.strip()}"),
-                                    f"Sub-GHz TX gestartet: {subghz_file_path.value.strip()}",
-                                ),
-                                page.update(),
-                            ),
+                            "Gespeichertes Signal senden",
+                            on_click=on_subghz_tx,
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Datei öffnen",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_SUBGHZ,
-                                    lambda: api.raw(f"storage read {subghz_file_path.value.strip()}"),
-                                    "Sub-GHz-Datei angezeigt",
-                                ),
-                                page.update(),
-                            ),
+                            "Dateiinhalt anzeigen",
+                            on_click=on_subghz_open,
                             height=control_height(),
                         ),
                     ],
                 ),
+                ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[subghz_file_path]),
                 ft.Text("Nur auf legalen Frequenzen nutzen.", color=ft.Colors.RED_300),
             ],
         )
@@ -841,49 +1097,30 @@ def run(page: ft.Page) -> None:
             "BadUSB",
             feature_hint(FEATURE_BADUSB),
             [
-                badusb_script_path,
-                badusb_confirm,
                 ft.Row(
                     wrap=True,
                     spacing=8,
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "Script starten",
-                            on_click=lambda _: (
-                                append_log("[WARN] Bestätigung fehlt")
-                                if not badusb_confirm.value
-                                else None,
-                                notify("Bitte zuerst BadUSB-Bestätigung aktivieren", error=True)
-                                if not badusb_confirm.value
-                                else guarded_call(
-                                    FEATURE_BADUSB,
-                                    lambda: api.raw(f"badusb run {badusb_script_path.value.strip()}"),
-                                    f"BadUSB gestartet: {badusb_script_path.value.strip()}",
-                                ),
-                                page.update(),
-                            ),
+                            "Ablauf starten",
+                            on_click=on_badusb_run,
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Stop",
-                            on_click=lambda _: (guarded_call(FEATURE_BADUSB, lambda: api.raw("badusb stop"), "BadUSB gestoppt"), page.update()),
+                            "Stoppen",
+                            on_click=lambda _: (guarded_call(FEATURE_BADUSB, lambda: api.raw("badusb stop"), "Ablauf gestoppt"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Script anzeigen",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_BADUSB,
-                                    lambda: api.raw(f"storage read {badusb_script_path.value.strip()}"),
-                                    "BadUSB-Script angezeigt",
-                                ),
-                                page.update(),
-                            ),
+                            "Ablaufinhalt anzeigen",
+                            on_click=on_badusb_open,
                             height=control_height(),
                         ),
                     ],
                 ),
+                ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[badusb_script_path]),
+                badusb_confirm,
             ],
         )
 
@@ -935,7 +1172,27 @@ def run(page: ft.Page) -> None:
         return ft.Column(
             spacing=spacing_value(),
             controls=[
-                ft.Text(f"Modul: {selected_module}", size=23, weight=ft.FontWeight.BOLD),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.Row(
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                ft.OutlinedButton("Zurück", on_click=back_to_home, height=control_height()),
+                                ft.Text(f"Modul: {selected_module}", size=23, weight=ft.FontWeight.BOLD),
+                            ],
+                        ),
+                        ft.Row(
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                scan_status_text,
+                                ft.OutlinedButton("Dateien aktualisieren", on_click=refresh_file_lists, height=control_height()),
+                            ],
+                        ),
+                    ],
+                ),
                 module_tabs,
                 module_panel_content,
             ],
@@ -947,6 +1204,8 @@ def run(page: ft.Page) -> None:
 
     def on_connect(_: ft.ControlEvent) -> None:
         connect_selected_port()
+        if serial_client.is_connected:
+            refresh_file_lists()
         page.update()
 
     def on_disconnect(_: ft.ControlEvent) -> None:
@@ -1068,14 +1327,14 @@ def run(page: ft.Page) -> None:
         )
 
         debug_card = panel_card(
-            "Debug Log",
-            "Status und Antworten vom Flipper.",
+            "Aktivitäten",
+            "Status und Rückmeldungen vom Flipper.",
             [
                 ft.Row(
                     spacing=8,
                     controls=[
                         ft.OutlinedButton(
-                            "Logs leeren",
+                            "Verlauf leeren",
                             on_click=lambda _: (log_lines.clear(), update_log_views(), page.update()),
                             height=control_height(),
                         ),
@@ -1182,7 +1441,9 @@ def run(page: ft.Page) -> None:
             if lines:
                 for line in lines:
                     append_log(line)
+                    process_scan_line(line)
                 page.update()
+            finish_scan_if_idle()
             await asyncio.sleep(0.2)
 
     page.run_task(pump_logs)
