@@ -154,10 +154,9 @@ def run(page: ft.Page) -> None:
 
     system_path_input = ft.TextField(label="Storage Pfad", value="/", width=320)
     storage_list_path_input = ft.TextField(label="Listen-Pfad", value="/", width=320)
-    storage_upload_local = ft.TextField(label="Lokale Datei", value="", width=340)
-    storage_upload_remote = ft.TextField(label="Ziel auf Flipper", value="/ext/", width=280)
-    storage_download_remote = ft.TextField(label="Quelle auf Flipper", value="/ext/", width=280)
-    storage_download_local = ft.TextField(label="Lokaler Zielpfad", value="", width=340)
+    storage_mkdir_path = ft.TextField(label="Ordner erstellen", value="/ext/new_folder", width=320)
+    storage_remove_path = ft.TextField(label="Datei/Ordner löschen", value="/ext/old_file.txt", width=320)
+    storage_read_path = ft.TextField(label="Datei anzeigen (read)", value="/ext/notes.txt", width=320)
 
     ir_command_input = ft.TextField(label="IR CLI", value="ir tx /ext/infrared/example.ir", expand=True)
     nfc_command_input = ft.TextField(label="NFC/RFID CLI", value="nfc detect", expand=True)
@@ -189,6 +188,13 @@ def run(page: ft.Page) -> None:
 
     main_content = ft.Container(expand=True)
     module_panel_content = ft.Container(expand=True)
+
+    def notify(message: str, error: bool = False) -> None:
+        page.snack_bar = ft.SnackBar(
+            content=ft.Text(message),
+            bgcolor=ft.Colors.RED_700 if error else ft.Colors.with_opacity(0.9, accent_color()),
+            open=True,
+        )
 
     def update_log_views() -> None:
         log_console.value = "\n".join(log_lines)
@@ -247,23 +253,31 @@ def run(page: ft.Page) -> None:
             ],
         )
 
-    def guarded_call(feature_key: str, callback) -> None:
+    def guarded_call(feature_key: str, callback, action_label: str = "Aktion") -> bool:
         if not is_enabled(feature_key):
-            append_log(f"[INFO] {feature_hint(feature_key)}")
-            return
+            message = feature_hint(feature_key)
+            append_log(f"[INFO] {message}")
+            notify(message, error=True)
+            return False
         if not serial_client.is_connected:
             append_log("[WARN] Kein Flipper verbunden")
-            return
+            notify("Kein Flipper verbunden. Bitte in Settings verbinden.", error=True)
+            return False
         try:
             callback()
+            append_log(f"[OK] {action_label}")
+            notify(action_label)
+            return True
         except Exception as exc:
             append_log(f"[ERROR] {exc}")
+            notify(f"Fehler bei {action_label}: {exc}", error=True)
+            return False
 
     def run_command(command: str) -> None:
         clean = command.strip()
         if not clean:
             return
-        guarded_call(FEATURE_SYSTEM, lambda: api.raw(clean))
+        guarded_call(FEATURE_SYSTEM, lambda: api.raw(clean), f"Raw gesendet: {clean}")
 
     def perform_scan() -> None:
         ports = scan_flipper_ports()
@@ -276,8 +290,10 @@ def run(page: ft.Page) -> None:
 
         if ports:
             append_log(f"[INFO] Gefundene Ports: {', '.join(ports)}")
+            notify(f"{len(ports)} Port(s) gefunden")
         else:
             append_log("[WARN] Keine passenden Flipper-Ports gefunden")
+            notify("Keine passenden Flipper-Ports gefunden", error=True)
 
     def connect_selected_port() -> None:
         selected_port = (port_dropdown.value or "").strip()
@@ -289,13 +305,16 @@ def run(page: ft.Page) -> None:
             settings["last_port"] = selected_port
             config_store.save_settings(settings)
             append_log(f"[INFO] Verbindung hergestellt: {selected_port}")
+            notify(f"Verbunden: {selected_port}")
         except Exception as exc:
             append_log(f"[ERROR] Verbindung fehlgeschlagen: {exc}")
+            notify(f"Verbindung fehlgeschlagen: {exc}", error=True)
         update_connection_status()
 
     def disconnect() -> None:
         serial_client.disconnect()
         update_connection_status()
+        notify("Verbindung getrennt")
 
     def refresh_macro_dropdown() -> None:
         macro_select.options = [ft.dropdown.Option(name) for name in sorted(macros.keys())]
@@ -368,9 +387,30 @@ def run(page: ft.Page) -> None:
             for command in commands:
                 api.raw(command)
 
-        guarded_call(FEATURE_MACROS, execute)
-        append_log(f"[INFO] Makro gestartet: {selected} ({len(commands)} Befehle)")
+        success = guarded_call(FEATURE_MACROS, execute, f"Makro gestartet: {selected}")
+        if success:
+            append_log(f"[INFO] Makro gestartet: {selected} ({len(commands)} Befehle)")
         page.update()
+
+    def run_macro_by_name(name: str) -> None:
+        if name in macros:
+            macro_select.value = name
+            commands = macros.get(name, [])
+            if not commands:
+                append_log(f"[WARN] Makro ist leer: {name}")
+                notify(f"Makro ist leer: {name}", error=True)
+                return
+
+            def execute() -> None:
+                for command in commands:
+                    api.raw(command)
+
+            success = guarded_call(FEATURE_MACROS, execute, f"Makro gestartet: {name}")
+            if success:
+                append_log(f"[INFO] Makro gestartet: {name} ({len(commands)} Befehle)")
+        else:
+            append_log(f"[WARN] Makro nicht gefunden: {name}")
+            notify(f"Makro nicht gefunden: {name}", error=True)
 
     def module_card(module_name: str, icon: ft.IconData) -> ft.Control:
         feature_key = module_to_feature[module_name]
@@ -428,7 +468,7 @@ def run(page: ft.Page) -> None:
                     controls=[
                         ft.ElevatedButton(
                             "Device Info",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info), page.update()),
+                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info, "Device Info angefragt"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
@@ -442,12 +482,12 @@ def run(page: ft.Page) -> None:
                         ),
                         ft.OutlinedButton(
                             "Storage /",
-                            on_click=lambda _: (guarded_call(FEATURE_STORAGE, lambda: api.storage_list("/")), page.update()),
+                            on_click=lambda _: (guarded_call(FEATURE_STORAGE, lambda: api.storage_list("/"), "Storage / gelistet"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
                             "Reboot",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.reboot_normal), page.update()),
+                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.reboot_normal, "Reboot ausgelöst"), page.update()),
                             height=control_height(),
                         ),
                     ],
@@ -466,20 +506,17 @@ def run(page: ft.Page) -> None:
                     controls=[
                         ft.ElevatedButton(
                             "OK short",
-                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("ok", "short")), page.update()),
+                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("ok", "short"), "OK short gesendet"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
                             "Back",
-                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("back", "short")), page.update()),
+                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("back", "short"), "Back gesendet"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
                             "Macro: Status",
-                            on_click=lambda _: (
-                                macro_select.__setattr__("value", "Status" if "Status" in macros else macro_select.value),
-                                run_macro(_),
-                            ),
+                            on_click=lambda _: (run_macro_by_name("Status"), page.update()),
                             height=control_height(),
                         ),
                     ],
@@ -513,13 +550,17 @@ def run(page: ft.Page) -> None:
                     controls=[
                         ft.ElevatedButton(
                             "Device Info",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info), page.update()),
+                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info, "Device Info angefragt"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
                             "Storage Pfad listen",
                             on_click=lambda _: (
-                                guarded_call(FEATURE_STORAGE, lambda: api.storage_list(system_path_input.value or "/")),
+                                guarded_call(
+                                    FEATURE_STORAGE,
+                                    lambda: api.storage_list(system_path_input.value or "/"),
+                                    f"Storage gelistet: {system_path_input.value or '/'}",
+                                ),
                                 page.update(),
                             ),
                             height=control_height(),
@@ -601,25 +642,10 @@ def run(page: ft.Page) -> None:
                         ft.ElevatedButton(
                             "List",
                             on_click=lambda _: (
-                                guarded_call(FEATURE_STORAGE, lambda: api.storage_list(storage_list_path_input.value or "/")),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        ),
-                    ],
-                ),
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        storage_upload_local,
-                        storage_upload_remote,
-                        ft.OutlinedButton(
-                            "Upload (Template)",
-                            on_click=lambda _: (
-                                run_command(
-                                    f"storage write {storage_upload_local.value.strip()} {storage_upload_remote.value.strip()}"
+                                guarded_call(
+                                    FEATURE_STORAGE,
+                                    lambda: api.storage_list(storage_list_path_input.value or "/"),
+                                    f"Storage gelistet: {storage_list_path_input.value or '/'}",
                                 ),
                                 page.update(),
                             ),
@@ -632,13 +658,54 @@ def run(page: ft.Page) -> None:
                     spacing=8,
                     run_spacing=8,
                     controls=[
-                        storage_download_remote,
-                        storage_download_local,
+                        storage_mkdir_path,
                         ft.OutlinedButton(
-                            "Download (Template)",
+                            "Mkdir",
                             on_click=lambda _: (
-                                run_command(
-                                    f"storage read {storage_download_remote.value.strip()} {storage_download_local.value.strip()}"
+                                guarded_call(
+                                    FEATURE_STORAGE,
+                                    lambda: api.raw(f"storage mkdir {storage_mkdir_path.value.strip()}"),
+                                    f"Ordner erstellt: {storage_mkdir_path.value.strip()}",
+                                ),
+                                page.update(),
+                            ),
+                            height=control_height(),
+                        ),
+                    ],
+                ),
+                ft.Row(
+                    wrap=True,
+                    spacing=8,
+                    run_spacing=8,
+                    controls=[
+                        storage_remove_path,
+                        ft.OutlinedButton(
+                            "Remove",
+                            on_click=lambda _: (
+                                guarded_call(
+                                    FEATURE_STORAGE,
+                                    lambda: api.raw(f"storage remove {storage_remove_path.value.strip()}"),
+                                    f"Pfad entfernt: {storage_remove_path.value.strip()}",
+                                ),
+                                page.update(),
+                            ),
+                            height=control_height(),
+                        ),
+                    ],
+                ),
+                ft.Row(
+                    wrap=True,
+                    spacing=8,
+                    run_spacing=8,
+                    controls=[
+                        storage_read_path,
+                        ft.OutlinedButton(
+                            "Read",
+                            on_click=lambda _: (
+                                guarded_call(
+                                    FEATURE_STORAGE,
+                                    lambda: api.raw(f"storage read {storage_read_path.value.strip()}"),
+                                    f"Datei gelesen: {storage_read_path.value.strip()}",
                                 ),
                                 page.update(),
                             ),
@@ -662,7 +729,10 @@ def run(page: ft.Page) -> None:
                     controls=[
                         ft.ElevatedButton(
                             "Ausführen",
-                            on_click=lambda _: (guarded_call(FEATURE_INFRARED, lambda: api.raw(ir_command_input.value)), page.update()),
+                            on_click=lambda _: (
+                                guarded_call(FEATURE_INFRARED, lambda: api.raw(ir_command_input.value), "IR-Befehl gesendet"),
+                                page.update(),
+                            ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
@@ -693,7 +763,10 @@ def run(page: ft.Page) -> None:
                     controls=[
                         ft.ElevatedButton(
                             "Ausführen",
-                            on_click=lambda _: (guarded_call(FEATURE_NFC_RFID, lambda: api.raw(nfc_command_input.value)), page.update()),
+                            on_click=lambda _: (
+                                guarded_call(FEATURE_NFC_RFID, lambda: api.raw(nfc_command_input.value), "NFC/RFID-Befehl gesendet"),
+                                page.update(),
+                            ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
@@ -724,7 +797,10 @@ def run(page: ft.Page) -> None:
                     controls=[
                         ft.ElevatedButton(
                             "Ausführen",
-                            on_click=lambda _: (guarded_call(FEATURE_SUBGHZ, lambda: api.raw(subghz_command_input.value)), page.update()),
+                            on_click=lambda _: (
+                                guarded_call(FEATURE_SUBGHZ, lambda: api.raw(subghz_command_input.value), "Sub-GHz-Befehl gesendet"),
+                                page.update(),
+                            ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
@@ -755,7 +831,10 @@ def run(page: ft.Page) -> None:
                     on_click=lambda _: (
                         append_log("[WARN] Bestätigung fehlt")
                         if not badusb_confirm.value
-                        else guarded_call(FEATURE_BADUSB, lambda: api.raw(badusb_command_input.value)),
+                        else None,
+                        notify("Bitte zuerst BadUSB-Bestätigung aktivieren", error=True)
+                        if not badusb_confirm.value
+                        else guarded_call(FEATURE_BADUSB, lambda: api.raw(badusb_command_input.value), "BadUSB-Befehl gesendet"),
                         page.update(),
                     ),
                     height=control_height(),
