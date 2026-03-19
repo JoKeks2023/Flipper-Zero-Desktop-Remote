@@ -19,6 +19,9 @@ class ConfigStore:
             "last_port": "",
             "expert_mode": False,
             "theme": "dark",
+            "accent": "orange",
+            "density": "comfort",
+            "start_module": "System",
         }
         return self._load_json(self.settings_file, default_settings)
 
