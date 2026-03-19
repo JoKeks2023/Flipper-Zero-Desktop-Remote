@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Flipper Zero Desktop Remote
+Comment=Control Flipper Zero from your desktop
+Exec=flipper-remote
+Icon=flipper-remote
+Terminal=false
+Categories=Utility;Development;
