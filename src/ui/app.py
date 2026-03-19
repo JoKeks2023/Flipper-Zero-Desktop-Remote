@@ -133,8 +133,6 @@ def run(page: ft.Page) -> None:
         options=[ft.dropdown.Option(m) for m in module_order],
     )
 
-    raw_cmd_input = ft.TextField(label="Raw CLI", hint_text="Befehl eingeben", expand=True)
-
     log_console = ft.TextField(
         label="Debug Log",
         multiline=True,
@@ -158,10 +156,10 @@ def run(page: ft.Page) -> None:
     storage_remove_path = ft.TextField(label="Datei/Ordner löschen", value="/ext/old_file.txt", width=320)
     storage_read_path = ft.TextField(label="Datei anzeigen (read)", value="/ext/notes.txt", width=320)
 
-    ir_command_input = ft.TextField(label="IR CLI", value="ir tx /ext/infrared/example.ir", expand=True)
-    nfc_command_input = ft.TextField(label="NFC/RFID CLI", value="nfc detect", expand=True)
-    subghz_command_input = ft.TextField(label="Sub-GHz CLI", value="subghz rx", expand=True)
-    badusb_command_input = ft.TextField(label="BadUSB CLI", value="badusb run /ext/badusb/script.txt", expand=True)
+    ir_file_path = ft.TextField(label="IR-Datei", value="/ext/infrared/example.ir", width=360)
+    nfc_file_path = ft.TextField(label="NFC-Datei (optional)", value="/ext/nfc/example.nfc", width=360)
+    subghz_file_path = ft.TextField(label="Sub-GHz-Datei (optional)", value="/ext/subghz/example.sub", width=360)
+    badusb_script_path = ft.TextField(label="BadUSB Script-Pfad", value="/ext/badusb/script.txt", width=360)
     badusb_confirm = ft.Checkbox(label="Ich bestätige kontrollierte/legitime Nutzung", value=False)
 
     macro_select = ft.Dropdown(label="Gespeichertes Makro", width=280, options=[])
@@ -272,12 +270,6 @@ def run(page: ft.Page) -> None:
             append_log(f"[ERROR] {exc}")
             notify(f"Fehler bei {action_label}: {exc}", error=True)
             return False
-
-    def run_command(command: str) -> None:
-        clean = command.strip()
-        if not clean:
-            return
-        guarded_call(FEATURE_SYSTEM, lambda: api.raw(clean), f"Raw gesendet: {clean}")
 
     def perform_scan() -> None:
         ports = scan_flipper_ports()
@@ -721,28 +713,32 @@ def run(page: ft.Page) -> None:
             "Infrared",
             feature_hint(FEATURE_INFRARED),
             [
-                ir_command_input,
+                ir_file_path,
                 ft.Row(
                     wrap=True,
                     spacing=8,
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "Ausführen",
+                            "Datei senden",
                             on_click=lambda _: (
-                                guarded_call(FEATURE_INFRARED, lambda: api.raw(ir_command_input.value), "IR-Befehl gesendet"),
+                                guarded_call(
+                                    FEATURE_INFRARED,
+                                    lambda: api.raw(f"ir tx {ir_file_path.value.strip()}"),
+                                    f"IR gesendet: {ir_file_path.value.strip()}",
+                                ),
                                 page.update(),
                             ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Template: Send",
-                            on_click=lambda _: (setattr(ir_command_input, "value", "ir tx /ext/infrared/example.ir"), page.update()),
+                            "Lernen starten",
+                            on_click=lambda _: (guarded_call(FEATURE_INFRARED, lambda: api.raw("ir rx"), "IR Lernmodus gestartet"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Template: Learn",
-                            on_click=lambda _: (setattr(ir_command_input, "value", "ir rx"), page.update()),
+                            "Datei öffnen",
+                            on_click=lambda _: (guarded_call(FEATURE_INFRARED, lambda: api.raw(f"storage read {ir_file_path.value.strip()}"), "IR-Datei angezeigt"), page.update()),
                             height=control_height(),
                         ),
                     ],
@@ -755,28 +751,35 @@ def run(page: ft.Page) -> None:
             "NFC/RFID",
             feature_hint(FEATURE_NFC_RFID),
             [
-                nfc_command_input,
+                nfc_file_path,
                 ft.Row(
                     wrap=True,
                     spacing=8,
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "Ausführen",
+                            "Detect",
                             on_click=lambda _: (
-                                guarded_call(FEATURE_NFC_RFID, lambda: api.raw(nfc_command_input.value), "NFC/RFID-Befehl gesendet"),
+                                guarded_call(FEATURE_NFC_RFID, lambda: api.raw("nfc detect"), "NFC Detect gestartet"),
                                 page.update(),
                             ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Detect",
-                            on_click=lambda _: (setattr(nfc_command_input, "value", "nfc detect"), page.update()),
+                            "Read",
+                            on_click=lambda _: (guarded_call(FEATURE_NFC_RFID, lambda: api.raw("nfc read"), "NFC Read gestartet"), page.update()),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "Read",
-                            on_click=lambda _: (setattr(nfc_command_input, "value", "nfc read"), page.update()),
+                            "Emulate Datei",
+                            on_click=lambda _: (
+                                guarded_call(
+                                    FEATURE_NFC_RFID,
+                                    lambda: api.raw(f"nfc emu {nfc_file_path.value.strip()}"),
+                                    f"NFC Emulation gestartet: {nfc_file_path.value.strip()}",
+                                ),
+                                page.update(),
+                            ),
                             height=control_height(),
                         ),
                     ],
@@ -789,28 +792,42 @@ def run(page: ft.Page) -> None:
             "Sub-GHz",
             feature_hint(FEATURE_SUBGHZ),
             [
-                subghz_command_input,
+                subghz_file_path,
                 ft.Row(
                     wrap=True,
                     spacing=8,
                     run_spacing=8,
                     controls=[
                         ft.ElevatedButton(
-                            "Ausführen",
+                            "RX starten",
                             on_click=lambda _: (
-                                guarded_call(FEATURE_SUBGHZ, lambda: api.raw(subghz_command_input.value), "Sub-GHz-Befehl gesendet"),
+                                guarded_call(FEATURE_SUBGHZ, lambda: api.raw("subghz rx"), "Sub-GHz RX gestartet"),
                                 page.update(),
                             ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "RX",
-                            on_click=lambda _: (setattr(subghz_command_input, "value", "subghz rx"), page.update()),
+                            "TX Datei",
+                            on_click=lambda _: (
+                                guarded_call(
+                                    FEATURE_SUBGHZ,
+                                    lambda: api.raw(f"subghz tx {subghz_file_path.value.strip()}"),
+                                    f"Sub-GHz TX gestartet: {subghz_file_path.value.strip()}",
+                                ),
+                                page.update(),
+                            ),
                             height=control_height(),
                         ),
                         ft.OutlinedButton(
-                            "TX",
-                            on_click=lambda _: (setattr(subghz_command_input, "value", "subghz tx"), page.update()),
+                            "Datei öffnen",
+                            on_click=lambda _: (
+                                guarded_call(
+                                    FEATURE_SUBGHZ,
+                                    lambda: api.raw(f"storage read {subghz_file_path.value.strip()}"),
+                                    "Sub-GHz-Datei angezeigt",
+                                ),
+                                page.update(),
+                            ),
                             height=control_height(),
                         ),
                     ],
@@ -824,20 +841,48 @@ def run(page: ft.Page) -> None:
             "BadUSB",
             feature_hint(FEATURE_BADUSB),
             [
-                badusb_command_input,
+                badusb_script_path,
                 badusb_confirm,
-                ft.ElevatedButton(
-                    "Ausführen",
-                    on_click=lambda _: (
-                        append_log("[WARN] Bestätigung fehlt")
-                        if not badusb_confirm.value
-                        else None,
-                        notify("Bitte zuerst BadUSB-Bestätigung aktivieren", error=True)
-                        if not badusb_confirm.value
-                        else guarded_call(FEATURE_BADUSB, lambda: api.raw(badusb_command_input.value), "BadUSB-Befehl gesendet"),
-                        page.update(),
-                    ),
-                    height=control_height(),
+                ft.Row(
+                    wrap=True,
+                    spacing=8,
+                    run_spacing=8,
+                    controls=[
+                        ft.ElevatedButton(
+                            "Script starten",
+                            on_click=lambda _: (
+                                append_log("[WARN] Bestätigung fehlt")
+                                if not badusb_confirm.value
+                                else None,
+                                notify("Bitte zuerst BadUSB-Bestätigung aktivieren", error=True)
+                                if not badusb_confirm.value
+                                else guarded_call(
+                                    FEATURE_BADUSB,
+                                    lambda: api.raw(f"badusb run {badusb_script_path.value.strip()}"),
+                                    f"BadUSB gestartet: {badusb_script_path.value.strip()}",
+                                ),
+                                page.update(),
+                            ),
+                            height=control_height(),
+                        ),
+                        ft.OutlinedButton(
+                            "Stop",
+                            on_click=lambda _: (guarded_call(FEATURE_BADUSB, lambda: api.raw("badusb stop"), "BadUSB gestoppt"), page.update()),
+                            height=control_height(),
+                        ),
+                        ft.OutlinedButton(
+                            "Script anzeigen",
+                            on_click=lambda _: (
+                                guarded_call(
+                                    FEATURE_BADUSB,
+                                    lambda: api.raw(f"storage read {badusb_script_path.value.strip()}"),
+                                    "BadUSB-Script angezeigt",
+                                ),
+                                page.update(),
+                            ),
+                            height=control_height(),
+                        ),
+                    ],
                 ),
             ],
         )
@@ -906,11 +951,6 @@ def run(page: ft.Page) -> None:
 
     def on_disconnect(_: ft.ControlEvent) -> None:
         disconnect()
-        page.update()
-
-    def on_send_raw(_: ft.ControlEvent) -> None:
-        run_command(raw_cmd_input.value or "")
-        raw_cmd_input.value = ""
         page.update()
 
     def on_expert_mode_change(_: ft.ControlEvent) -> None:
@@ -1028,14 +1068,12 @@ def run(page: ft.Page) -> None:
         )
 
         debug_card = panel_card(
-            "Debug Console",
-            "Raw-Befehle und vollständige Logs.",
+            "Debug Log",
+            "Status und Antworten vom Flipper.",
             [
                 ft.Row(
                     spacing=8,
                     controls=[
-                        raw_cmd_input,
-                        ft.ElevatedButton("Raw senden", on_click=on_send_raw, height=control_height()),
                         ft.OutlinedButton(
                             "Logs leeren",
                             on_click=lambda _: (log_lines.clear(), update_log_views(), page.update()),

@@ -5,6 +5,7 @@ Desktop-App zur Steuerung eines Flipper Zero (Momentum Firmware) auf macOS und D
 ## Aktueller Stand (V1 Full App)
 
 - Flet-Desktop-UI mit dunklem Theme und orangefarbenem Akzent
+- Bedienung ohne sichtbare CLI-Eingaben in der App (Button- und Formular-Workflows)
 - Port-Scan für:
   - macOS: `/dev/cu.usbmodem*` und `/dev/tty.usbmodem*`
   - Linux: `/dev/ttyACM*`
@@ -13,9 +14,10 @@ Desktop-App zur Steuerung eines Flipper Zero (Momentum Firmware) auf macOS und D
 - Remote-Tasten: Up, Down, Left, Right, OK, Back
 - Long-Press mit Fallback (`long` + `press/release`)
 - Quick-Actions: `device_info`, `storage list /`, Vibro, Reboot-Modi
-- Log-Konsole (Befehlsausgabe + kontinuierlicher Serial-Stream)
+- Log-Konsole (Statusmeldungen + kontinuierlicher Serial-Stream)
 - Persistente Makros (JSON), speichern/laden/löschen/ausführen
 - Expert-Mode Safety Gate für riskante Module (NFC/RFID, Sub-GHz, BadUSB)
+- Modulaktionen für IR/NFC/Sub-GHz/BadUSB über direkte Buttons (z. B. Detect/Read/RX/TX/Run)
 
 ## Projektstruktur
 
@@ -84,5 +86,5 @@ Gespeichert werden:
 
 - Debian USB-Rechte: ggf. Nutzer zur Gruppe `dialout` hinzufügen.
 - Einige Momentum-CLI-Befehle können je Firmware-Version variieren.
-- Einige Storage/IR/NFC/Sub-GHz/BadUSB-Kommandos sind als CLI-Templates umgesetzt, da die exakte Syntax je Firmware-Version variieren kann.
+- Interne Modul-Aktionen senden passende Firmware-Befehle im Hintergrund; bei abweichender Momentum-Version können einzelne Aktionen andere Syntax benötigen.
 - Expert-Mode nur in kontrollierten/legalen Kontexten verwenden.
