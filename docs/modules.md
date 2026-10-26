@@ -2,7 +2,7 @@
 
 | Bereich | Umsetzung |
 |---|---|
-| Control Center | Kompakte Werkzeugliste und Gerätestatus |
+| Control Center | Geräte-Dashboard mit Akku-/Power-Messwerten, Firmware/Hardware, Rohdaten-Dialog und kompakten Werkzeugzugängen |
 | System | Geräteinfo, Loader-Status, normaler Neustart nach Bestätigung |
 | Remote | Live-Display per RPC, Tasten kurz/lang, Rückkehr zur CLI für Dateiaktionen |
 | Storage | Verzeichnisnavigation, Textvorschau, Ordner erstellen, bestätigtes Löschen |

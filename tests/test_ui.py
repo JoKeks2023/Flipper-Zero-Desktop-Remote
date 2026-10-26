@@ -34,6 +34,12 @@ class FakeClient:
         self.commands.append(command)
         if command == 'device_info':
             return 'hardware_model : Flipper Zero\nfirmware_origin_fork : Momentum'
+        if command == 'info power':
+            return ('format.major: 2\ncharge.level: 98\ncharge.state: discharging\n'
+                    'battery.voltage: 3919\nbattery.current: 0\nbattery.temp: 20\n'
+                    'battery.health: 100\ncapacity.remain: 2056\ncapacity.full: 2100')
+        if command == 'info power_debug':
+            return 'format.major: 1\ncharger.vbus: 5100\ncharger.vsys: 3984'
         if command.startswith('storage list'):
             return '\t[D] nested\n\t[F] Canon RC-6.ir 131b'
         if command.startswith('storage read'):
@@ -92,6 +98,75 @@ class UITest(unittest.TestCase):
         button.click()
         self.wait_idle()
         self.assertEqual(self.client.commands[-1:], ['input send up long'])
+
+    def test_dashboard_reads_formats_refreshes_and_clears_device_values(self):
+        self.connect()
+        dashboard = self.window.dashboard
+        self.assertEqual(dashboard.metrics['battery'].text(), '98 %')
+        self.assertEqual(dashboard.notes['battery'].text(), 'Lädt nicht')
+        self.assertEqual(dashboard.metrics['usb'].text(), '5,10 V')
+        self.assertEqual(dashboard.metrics['temperature'].text(), '20 °C')
+        self.assertEqual(dashboard.values['voltage'].text(), '3,919 V')
+        self.assertEqual(dashboard.values['current'].text(), '0 mA')
+        self.assertEqual(dashboard.values['remaining'].text(), '2056 mAh')
+        self.assertIn('Aktualisiert', dashboard.freshness.text())
+        self.client.commands.clear()
+        dashboard.refresh.click()
+        self.wait_idle()
+        self.assertEqual(self.client.commands, ['device_info', 'info power', 'info power_debug'])
+        self.window.disconnect_device()
+        self.assertEqual(dashboard.metrics['battery'].text(), '—')
+        self.assertEqual(dashboard.values['remaining'].text(), '—')
+        self.assertFalse(dashboard.refresh.isEnabled())
+
+    def test_failed_power_refresh_never_keeps_previous_values_as_current(self):
+        self.connect()
+        original = self.client.send_command
+        def send(command, **kwargs):
+            if command == 'info power':
+                raise RuntimeError('Unsupported power command')
+            return original(command, **kwargs)
+        self.client.send_command = send
+        self.window.refresh_dashboard()
+        self.wait_idle()
+        dashboard = self.window.dashboard
+        self.assertTrue(self.window.connected)
+        self.assertEqual(dashboard.metrics['battery'].text(), '—')
+        self.assertEqual(dashboard.values['current'].text(), '—')
+        self.assertIn('Akku nicht verfügbar', dashboard.freshness.text())
+        self.assertEqual(dashboard.metrics['usb'].text(), '5,10 V')
+
+    def test_dashboard_fits_minimum_window_without_horizontal_scrolling(self):
+        self.connect()
+        for width, height in ((1080, 680), (960, 600)):
+            self.window.resize(width, height)
+            APP.processEvents()
+            scroll = self.window.stack.widget(0)
+            self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+
+    def test_dashboard_poll_only_when_visible_idle_and_cli_owns_connection(self):
+        self.connect()
+        self.client.commands.clear()
+        self.window.nav.setCurrentRow(MODULES.index('Remote'))
+        self.window._poll_dashboard()
+        self.assertEqual(self.client.commands, [])
+        self.window.nav.setCurrentRow(0)
+        self.wait_idle()
+        self.assertIn('info power', self.client.commands)
+        self.client.commands.clear()
+        with patch.object(type(self.window.rpc), 'is_connected', new_callable=lambda: property(lambda _: True)):
+            self.window._update_state()
+            self.window._poll_dashboard()
+            self.assertFalse(self.window.refresh_dashboard())
+            self.assertFalse(self.window.dashboard.refresh.isEnabled())
+            self.assertIn('pausiert', self.window.dashboard.freshness.text())
+            self.assertEqual(self.client.commands, [])
+        gate = threading.Event()
+        self.window.submit('busy', lambda: gate.wait(2))
+        self.window._poll_dashboard()
+        self.assertEqual(self.client.commands, [])
+        gate.set()
+        self.wait_idle()
     def test_worker_leaves_ui_responsive_and_returns_on_main_thread(self):
         gate = threading.Event()
         result_threads = []

@@ -6,6 +6,9 @@ macOS und Linux. Keine WebView, kein Flet, kein lokaler Webserver.
 ## Was die App kann
 
 - **Easy Mode:** Aufgaben statt CLI, vereinfachte Navigation, technische Details ausgeblendet.
+- **Geräte-Dashboard:** Akkustand, Ladezustand, USB-/Akku-/Systemspannung, Strom,
+  Temperatur, Akkugesundheit, Kapazitäten und Geräte-/Firmwaredaten. Echte Messwerte,
+  manuelle und automatische Aktualisierung, vollständige Rohdaten auf Wunsch.
 - **Live-Fernbedienung:** echtes 128 × 64 Display über USB, kurze/lange Tastendrücke.
   Damit lassen sich die Geräte-Menüs und dort verfügbare Funktionen am Desktop bedienen.
 - **Dateibrowser:** echte Ordner/Dateien, Unterordner, Textvorschau, Ordner erstellen,
@@ -50,6 +53,7 @@ verteilbares Release. Standalone-Builds: [Build-Anleitung](docs/building.md).
 
 Am 26.10.2026 mit angeschlossenem Momentum **mntm-012** auf macOS geprüft:
 USB-Geräteinformationen, echte Dateilisten, Display-Streaming und Remote-Eingabe.
+Das Dashboard wurde ebenfalls mit realen Akku- und Power-Messwerten geprüft.
 Tests ohne Hardware prüfen unter anderem Antwortgrenzen, Timeout/Abbruch,
 Dateinamen mit Leerzeichen, Qt-Worker und lokale Speicherung.
 

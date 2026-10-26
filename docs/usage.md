@@ -1,13 +1,27 @@
 # Benutzung
 
 1. Flipper per USB verbinden, qFlipper schließen, **Verbinden** klicken.
-2. Im **Control Center** die gewünschte Aufgabe auswählen.
+2. Die **Übersicht / Control Center** zeigt aktuelle Geräte-, Akku- und Power-Daten.
+   Darunter die gewünschte Aufgabe auswählen.
 3. **Flipper bedienen → Live-Ansicht starten** zeigt das echte Geräte-Display.
    Die Pfeile, OK und Zurück bedienen die Geräte-Menüs. Für langes Drücken den
    entsprechenden Schalter aktivieren. Pfeiltasten, Enter und Escape/Backspace
    funktionieren bei Fokus auf der Remote-Seite ebenfalls. Es werden keine simulierten Gerätebilder gezeigt.
 4. **Dateien** oder eine Modulbibliothek öffnen. Das Programm wechselt bei Bedarf
    von Display-RPC zurück zur CLI und lädt den aktuellen Ordner.
+
+## Geräte-Dashboard
+
+Die Startseite liest den Gerätestatus beim Verbinden und bei Rückkehr zur Übersicht.
+Solange sie sichtbar ist, werden die Messwerte bei freier Verbindung alle 10 Sekunden
+neu abgefragt. **Aktualisieren** liest sie sofort erneut; der Zeitpunkt steht unter
+den Werten. **Alle Geräteinfos…** öffnet eine Momentaufnahme aller gemeldeten Rohwerte
+in den Bereichen Gerät, Akku & Strom und Power-Diagnose.
+
+Während einer laufenden Live-Ansicht bleibt der letzte Messzeitpunkt sichtbar und
+die Aktualisierung pausiert. Zum Fortsetzen die Live-Ansicht beenden. Fehlende Werte
+erscheinen als **—**, fehlgeschlagene Abfragen werden benannt. **Lädt nicht** ist der
+vom Flipper gemeldete Ladezustand und kann auch bei angeschlossenem USB auftreten.
 
 ## Easy Mode und alle Werkzeuge
 

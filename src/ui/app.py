@@ -10,7 +10,7 @@ from PySide6.QtGui import QAction, QColor, QFontDatabase, QPalette, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDockWidget, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
-    QFrame, QProgressBar, QStyle, QSizePolicy,
+    QFrame, QProgressBar, QScrollArea, QStyle, QSizePolicy,
     QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
     QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -20,6 +20,7 @@ from core.flipper_api import FlipperAPI
 from core.serial_client import SerialClient
 from core.rpc_display import RpcDisplay
 from core.storage import quote_path
+from core.device_status import read_device_status
 from persistence.config_store import ConfigStore
 from ui.browser import FileBrowser
 from ui.jobs import Job
@@ -28,6 +29,7 @@ from ui.sidebar import Sidebar
 from ui.icons import icon, MODULE_ICONS
 from ui.action_row import ActionRow
 from ui.controls import CompactComboBox
+from ui.dashboard import DeviceDashboard
 from ui.theme import colors, palette as theme_palette, stylesheet
 
 APP_NAME = "Flipper Zero Desktop Remote"
@@ -93,6 +95,9 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._pump)
         self.timer.start(100)
+        self.dashboard_timer = QTimer(self)
+        self.dashboard_timer.timeout.connect(self._poll_dashboard)
+        self.dashboard_timer.start(10_000)
         self._update_state()
 
     def _build(self):
@@ -233,11 +238,12 @@ class MainWindow(QMainWindow):
         label.setObjectName("pageTitle")
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         layout.addWidget(label)
-        hint = QLabel(subtitle)
-        hint.setWordWrap(True)
-        hint.setObjectName("subtitle")
-        hint.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        layout.addWidget(hint)
+        if subtitle:
+            hint = QLabel(subtitle)
+            hint.setWordWrap(True)
+            hint.setObjectName("subtitle")
+            hint.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            layout.addWidget(hint)
         return page, layout
 
     def _button(self, label, callback, layout, device=True):
@@ -249,34 +255,21 @@ class MainWindow(QMainWindow):
         return button
 
     def _home_page(self):
-        page, layout = self._page("Übersicht", "Gerätebedienung und gespeicherte Dateien.")
-        summary = QFrame()
-        summary.setObjectName("deviceSummary")
-        summary_layout = QHBoxLayout(summary)
-        summary_layout.setContentsMargins(16, 12, 16, 12)
-        details = QVBoxLayout()
-        details.setSpacing(4)
-        heading = QLabel("Flipper Zero")
-        heading.setObjectName("cardTitle")
-        self.home_device = QLabel(self.device_description)
-        self.home_device.setObjectName("subtitle")
-        self.home_device.setWordWrap(True)
-        details.addWidget(heading)
-        details.addWidget(self.home_device)
-        summary_layout.addLayout(details, 1)
-        launch = QPushButton("Bedienen")
-        launch.setProperty("role", "primary")
-        launch.clicked.connect(lambda: self.nav.setCurrentRow(MODULES.index("Remote")))
-        summary_layout.addWidget(launch)
-        layout.addWidget(summary)
+        page, layout = self._page("Übersicht", "")
+        layout.setSpacing(8)
+        self.dashboard = DeviceDashboard()
+        self.dashboard.refresh_requested.connect(self.refresh_dashboard)
+        self.dashboard.remote_requested.connect(lambda: self.nav.setCurrentRow(MODULES.index("Remote")))
+        layout.addWidget(self.dashboard)
         label = QLabel("Werkzeuge")
         label.setObjectName("sectionLabel")
         layout.addWidget(label)
         self.home_rows = []
         rows = QWidget()
-        row_layout = QVBoxLayout(rows)
+        row_layout = QGridLayout(rows)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(0)
+        row_layout.setHorizontalSpacing(24)
+        row_layout.setVerticalSpacing(0)
         tasks = [
             ("Live-Bedienung", "Geräte-Display, Navigation und Tastatur", "Remote", "remote"),
             ("Fernbedienungen", "IR-Dateien auf der SD-Karte", "Infrared", "infrared"),
@@ -285,14 +278,20 @@ class MainWindow(QMainWindow):
             ("Funk-Signale", "Gespeicherte Sub-GHz-Dateien", "Sub-GHz", "radio"),
             ("USB-Abläufe", "Gespeicherte Skripte", "BadUSB", "usb"),
         ]
-        for title, description, module, symbol in tasks:
+        for index, (title, description, module, symbol) in enumerate(tasks):
             row = ActionRow(title, description, symbol)
             row.clicked.connect(lambda checked=False, name=module: self.nav.setCurrentRow(MODULES.index(name)))
-            row_layout.addWidget(row)
+            row_layout.addWidget(row, index // 2, index % 2)
             self.home_rows.append(row)
+        row_layout.setColumnStretch(0, 1)
+        row_layout.setColumnStretch(1, 1)
         layout.addWidget(rows)
         layout.addStretch()
-        return page
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
 
     def change_mode(self, index):
         self.settings["easy_mode"] = index == 0
@@ -497,6 +496,8 @@ class MainWindow(QMainWindow):
 
     def _select_module(self, index):
         self.stack.setCurrentIndex(index)
+        if index == 0:
+            self._poll_dashboard()
         if 3 <= index <= 7 and self.connected and not self.busy:
             browser = self.browsers[index - 3]
             self.browse(browser, browser.current_path)
@@ -607,17 +608,35 @@ class MainWindow(QMainWindow):
                 self.client.connect(port)
                 if self.closing.is_set() or self.cancel_macro.is_set():
                     self.client.disconnect()
-                    return ""
-                return self.client.send_command("device_info")
+                    raise InterruptedError("Verbindung abgebrochen")
+                return read_device_status(self.client.send_command, self.cancel_macro.is_set)
             except Exception:
                 self.client.disconnect()
                 raise
-        def connected(info):
+        def connected(status):
             self.connected_port = port
             self.settings["last_port"] = port
             self._save(self.store.save_settings, self.settings)
-            self._show_info(info)
+            self._show_status(status)
         self.submit("Flipper verbinden", work, connected, require_connection=False)
+
+    def _poll_dashboard(self):
+        if self.stack.currentIndex() == 0 and self.client.is_connected and not self.rpc.is_connected and not self.busy:
+            self.refresh_dashboard()
+
+    def refresh_dashboard(self):
+        # Telemetry never switches the serial owner or interrupts a live screen.
+        if not self.client.is_connected or self.rpc.is_connected:
+            return False
+        return self.submit("Gerätestatus aktualisieren",
+                           lambda: read_device_status(self.client.send_command, self.cancel_macro.is_set),
+                           self._show_status)
+
+    def _show_status(self, status):
+        self._show_info("\n".join(f"{key}: {value}" for key, value in status.device.items()))
+        self.dashboard.show_status(status)
+        if not self.client.is_connected:
+            self._clear_device()
 
     def disconnect_device(self):
         self.generation += 1
@@ -651,7 +670,6 @@ class MainWindow(QMainWindow):
                 self.info.addTopLevelItem(QTreeWidgetItem([key.strip(), value.strip()]))
         self.device_label.setText(values.get("hardware_name", "Flipper Zero"))
         self.device_description = " · ".join(filter(None, [values.get("hardware_name"), values.get("firmware_origin_fork"), values.get("firmware_version"), "USB verbunden"]))
-        self.home_device.setText(self.device_description)
 
     def _show_output(self, response):
         if response:
@@ -783,7 +801,7 @@ class MainWindow(QMainWindow):
 
     def _clear_device(self):
         self.info.clear()
-        self.home_device.setText("Flipper anschließen und verbinden")
+        self.dashboard.clear()
         self.device_label.setText("Kein Gerät")
         self.screen.clear()
         for browser in self.browsers:
@@ -806,6 +824,7 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(self.busy)
         for control in self.device_controls:
             control.setEnabled(connected and not self.busy)
+        self.dashboard.set_connection(connected, self.busy, self.rpc.is_connected)
 
     def _pump(self):
         for line in self.client.pop_logs():
@@ -832,6 +851,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.timer.stop()
+        self.dashboard_timer.stop()
         event.accept()
 
 

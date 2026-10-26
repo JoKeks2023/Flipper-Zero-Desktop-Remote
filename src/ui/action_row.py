@@ -1,6 +1,6 @@
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QFont, QPainter, QColor
-from PySide6.QtWidgets import QAbstractButton
+from PySide6.QtWidgets import QAbstractButton, QSizePolicy
 from ui.icons import icon
 
 
@@ -14,6 +14,7 @@ class ActionRow(QAbstractButton):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(44)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.tokens = None
 
     def enterEvent(self, event):
@@ -26,6 +27,9 @@ class ActionRow(QAbstractButton):
 
     def sizeHint(self):
         return QSize(480, 44)
+
+    def minimumSizeHint(self):
+        return QSize(220, 44)
 
     def paintEvent(self, event):
         if self.tokens is None:

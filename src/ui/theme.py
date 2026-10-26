@@ -42,6 +42,20 @@ def stylesheet(c):
         QLabel#connectionDot {{ font-size: 8px; }}
         QLabel#connectionStatus {{ color: {c['secondary']}; font-size: 12px; }}
         QFrame#deviceSummary {{ background: {c['surface']}; border: none; border-radius: 8px; }}
+        QScrollArea, QScrollArea > QWidget > QWidget {{ background: {c['bg']}; }}
+        QFrame#dashboardMetrics {{ background: {c['surface']}; border-radius: 8px; }}
+        QFrame#dashboardDivider {{ background: {c['border']}; }}
+        QLabel#deviceHeading {{ color: {c['strong']}; font-size: 15px; font-weight: 600; }}
+        QLabel#metricLabel {{ color: {c['secondary']}; font-size: 12px; }}
+        QLabel#metricValue {{ color: {c['strong']}; font-size: 28px; font-weight: 500; }}
+        QLabel#metricNote {{ color: {c['secondary']}; font-size: 11px; }}
+        QLabel#detailValue {{ color: {c['strong']}; font-size: 12px; }}
+        QProgressBar#batteryLevel {{ background: {c['border']}; border: none; border-radius: 2px; }}
+        QProgressBar#batteryLevel::chunk {{ background: {c['accent']}; border-radius: 2px; }}
+        QDialog {{ background: {c['bg']}; }}
+        QTabWidget::pane {{ border: 1px solid {c['border']}; }}
+        QTabBar::tab {{ background: {c['surface']}; color: {c['secondary']}; padding: 7px 12px; }}
+        QTabBar::tab:selected {{ background: {c['selected']}; color: {c['accent']}; }}
         QWidget#sidebar {{ background: transparent; }}
         QWidget#sidebar QPushButton {{ background: transparent; text-align: left; border: none; padding: 7px 10px; border-radius: 6px; font-size: 12px; font-weight: 400; }}
         QWidget#sidebar QPushButton:hover {{ background: {c['hover']}; }}
