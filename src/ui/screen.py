@@ -10,7 +10,7 @@ def frame_image(data, orientation=0):
     pixels = bytes(0 if data[x + (y // 8) * 128] & (1 << (y % 8)) else 1
                    for y in range(64) for x in range(128))
     image = QImage(pixels, 128, 64, 128, QImage.Format.Format_Indexed8).copy()
-    image.setColorTable([QColor('#24251f').rgba(), QColor('#f7ad46').rgba()])
+    image.setColorTable([QColor('#302b24').rgba(), QColor('#ddc39b').rgba()])
     if orientation:
         image = image.transformed(QTransform().rotate({1: 180, 2: 90, 3: 270}.get(orientation, 0)))
     return image
@@ -20,6 +20,7 @@ class ScreenView(QWidget):
     def __init__(self):
         super().__init__()
         self.image = None
+        self.stage_color = '#1e1e22'
         self.setMinimumSize(320, 220)
         self.setAccessibleName('Live-Display des Flippers')
         self.setToolTip('Das echte Geräte-Display, live über USB übertragen')
@@ -36,12 +37,14 @@ class ScreenView(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor('#171a1e'))
-        painter.drawRoundedRect(self.rect(), 18, 18)
-        area = self.rect().adjusted(24, 24, -24, -24)
+        painter.setBrush(QColor(self.stage_color))
+        painter.drawRoundedRect(self.rect(), 8, 8)
+        area = self.rect().adjusted(16, 16, -16, -16)
         if self.image:
-            image = self.image.scaled(area.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+            scale = max(1, min(4, area.width() // self.image.width(), area.height() // self.image.height()))
+            image = self.image.scaled(self.image.width() * scale, self.image.height() * scale,
+                                      Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
             painter.drawImage(area.center().x() - image.width() // 2, area.center().y() - image.height() // 2, image)
         else:
-            painter.setPen(QColor('#c5c9d1'))
-            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, 'Dein Flipper. Live auf dem Desktop.\nLive-Ansicht starten, um das Display zu sehen.')
+            painter.setPen(QColor('#86868f'))
+            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, 'Live-Ansicht ist aus')

@@ -2,7 +2,7 @@
 
 | Bereich | Umsetzung |
 |---|---|
-| Control Center | Aufgaben-Karten und Gerätestatus |
+| Control Center | Kompakte Werkzeugliste und Gerätestatus |
 | System | Geräteinfo, Loader-Status, normaler Neustart nach Bestätigung |
 | Remote | Live-Display per RPC, Tasten kurz/lang, Rückkehr zur CLI für Dateiaktionen |
 | Storage | Verzeichnisnavigation, Textvorschau, Ordner erstellen, bestätigtes Löschen |

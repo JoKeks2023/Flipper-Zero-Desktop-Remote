@@ -5,12 +5,12 @@ import shlex
 import sys
 import threading
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import Qt, QSize, QThreadPool, QTimer
 from PySide6.QtGui import QAction, QColor, QFontDatabase, QPalette, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDockWidget, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
-    QFrame, QProgressBar, QStyle,
+    QFrame, QProgressBar, QStyle, QSizePolicy,
     QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
     QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -25,6 +25,10 @@ from ui.browser import FileBrowser
 from ui.jobs import Job
 from ui.screen import ScreenView
 from ui.sidebar import Sidebar
+from ui.icons import icon, MODULE_ICONS
+from ui.action_row import ActionRow
+from ui.controls import CompactComboBox
+from ui.theme import colors, palette as theme_palette, stylesheet
 
 APP_NAME = "Flipper Zero Desktop Remote"
 MODULES = ["Control Center", "System", "Remote", "Storage", "Infrared", "NFC/RFID", "Sub-GHz", "BadUSB", "Makros", "Einstellungen"]
@@ -58,8 +62,8 @@ class MainWindow(QMainWindow):
     def __init__(self, store=None, client=None, scan_ports=scan_flipper_ports):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.resize(1180, 820)
-        self.setMinimumSize(960, 620)
+        self.resize(1080, 680)
+        self.setMinimumSize(960, 600)
         self.store = store or ConfigStore(APP_NAME)
         self.settings = self.store.load_settings()
         self.macros = self.store.load_macros()
@@ -93,49 +97,87 @@ class MainWindow(QMainWindow):
 
     def _build(self):
         root = QWidget()
-        root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(18, 16, 18, 12)
-        root_layout.setSpacing(16)
-        top = QHBoxLayout()
-        brand = QLabel("FLIPPER  /  CONTROL CENTER")
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        shell = QFrame()
+        shell.setObjectName("sidebarShell")
+        shell.setFixedWidth(196)
+        side = QVBoxLayout(shell)
+        side.setContentsMargins(12, 20, 12, 12)
+        side.setSpacing(16)
+        identity = QHBoxLayout()
+        identity.setSpacing(10)
+        self.brand_mark = QLabel()
+        self.brand_mark.setFixedSize(28, 28)
+        identity.addWidget(self.brand_mark)
+        names = QVBoxLayout()
+        names.setSpacing(2)
+        brand = QLabel("Flipper Remote")
         brand.setObjectName("brand")
-        top.addWidget(brand)
-        top.addStretch()
-        self.mode = QComboBox()
+        caption = QLabel("Control Center")
+        caption.setObjectName("brandCaption")
+        names.addWidget(brand)
+        names.addWidget(caption)
+        identity.addLayout(names)
+        side.addLayout(identity)
+        self.nav = Sidebar()
+        self.nav.setObjectName("sidebar")
+        self.nav.addItems(MODULES)
+        self.nav.setSpacing(2)
+        self.nav.setAccessibleName("Module")
+        side.addWidget(self.nav, 1)
+        mode_caption = QLabel("Bedienung")
+        mode_caption.setObjectName("caption")
+        side.addWidget(mode_caption)
+        self.mode = CompactComboBox()
         self.mode.addItems(["Easy Mode", "Alle Werkzeuge"])
         self.mode.setAccessibleName("Bedienmodus")
-        self.mode.setMinimumWidth(165)
         self.mode.setCurrentIndex(0 if self.settings.get("easy_mode", True) else 1)
         self.mode.currentIndexChanged.connect(self.change_mode)
-        top.addWidget(self.mode)
-        self.ports = QComboBox()
+        side.addWidget(self.mode)
+        root_layout.addWidget(shell)
+        workspace = QWidget()
+        workspace.setObjectName("workspace")
+        main_layout = QVBoxLayout(workspace)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        toolbar = QFrame()
+        toolbar.setObjectName("toolbar")
+        toolbar.setFixedHeight(52)
+        top = QHBoxLayout(toolbar)
+        top.setContentsMargins(24, 8, 24, 8)
+        top.setSpacing(8)
+        self.connection_dot = QLabel("●")
+        self.connection_dot.setObjectName("connectionDot")
+        self.device_label = QLabel("Kein Gerät")
+        self.device_label.setObjectName("deviceName")
+        self.connection_label = QLabel("Nicht verbunden")
+        self.connection_label.setObjectName("connectionStatus")
+        top.addWidget(self.connection_dot)
+        top.addWidget(self.device_label)
+        top.addWidget(self.connection_label)
+        top.addStretch()
+        self.ports = CompactComboBox()
         self.ports.setAccessibleName("USB-Port")
-        self.ports.setMinimumContentsLength(22)
+        self.ports.setMaximumWidth(260)
+        self.ports.setMinimumContentsLength(16)
         self.scan_button = QPushButton("Suchen")
+        self.scan_button.setProperty("role", "ghost")
         self.scan_button.clicked.connect(self.scan)
         self.connect_button = QPushButton("Verbinden")
+        self.connect_button.setProperty("role", "primary")
         self.connect_button.clicked.connect(self.connect_device)
         self.disconnect_button = QPushButton("Trennen")
+        self.disconnect_button.setProperty("role", "ghost")
         self.disconnect_button.clicked.connect(self.disconnect_device)
         self.stop_button = QPushButton("Abbrechen")
+        self.stop_button.setProperty("role", "ghost")
         self.stop_button.setToolTip("Laufenden CLI-Befehl mit Strg+C abbrechen")
         self.stop_button.clicked.connect(self.interrupt)
-        self.connection_label = QLabel("Nicht verbunden")
         for widget in [self.ports, self.scan_button, self.connect_button, self.disconnect_button, self.stop_button]:
             top.addWidget(widget)
-        top.addStretch()
-        top.addWidget(self.connection_label)
-        root_layout.addLayout(top)
-        splitter = QSplitter()
-        self.nav = Sidebar()
-        self.nav.addItems(MODULES)
-        self.nav.setObjectName("sidebar")
-        self.nav.setSpacing(4)
-        icons = [QStyle.StandardPixmap.SP_ComputerIcon, QStyle.StandardPixmap.SP_FileDialogInfoView, QStyle.StandardPixmap.SP_DesktopIcon, QStyle.StandardPixmap.SP_DirIcon, QStyle.StandardPixmap.SP_MediaPlay, QStyle.StandardPixmap.SP_DriveFDIcon, QStyle.StandardPixmap.SP_BrowserReload, QStyle.StandardPixmap.SP_DriveHDIcon, QStyle.StandardPixmap.SP_FileDialogDetailedView, QStyle.StandardPixmap.SP_FileDialogContentsView]
-        for index, icon in enumerate(icons):
-            self.nav.item(index).setIcon(self.style().standardIcon(icon))
-        self.nav.setAccessibleName("Module")
-        self.nav.setMinimumWidth(145)
+        main_layout.addWidget(toolbar)
         self.stack = QStackedWidget()
         self.stack.addWidget(self._home_page())
         self.stack.addWidget(self._system_page())
@@ -148,11 +190,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self._macros_page())
         self.stack.addWidget(self._settings_page())
         self.nav.currentRowChanged.connect(self._select_module)
-        splitter.addWidget(self.nav)
-        splitter.addWidget(self.stack)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([160, 900])
-        root_layout.addWidget(splitter)
+        main_layout.addWidget(self.stack, 1)
+        root_layout.addWidget(workspace, 1)
         self.setCentralWidget(root)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
@@ -188,18 +227,16 @@ class MainWindow(QMainWindow):
     def _page(self, title, subtitle):
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 16)
+        layout.setSpacing(12)
         label = QLabel(title)
-        font = label.font()
-        font.setPointSize(font.pointSize() + 7)
-        font.setBold(True)
-        label.setFont(font)
         label.setObjectName("pageTitle")
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         layout.addWidget(label)
         hint = QLabel(subtitle)
         hint.setWordWrap(True)
         hint.setObjectName("subtitle")
-        layout.setContentsMargins(26, 12, 14, 12)
-        layout.setSpacing(16)
+        hint.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         layout.addWidget(hint)
         return page, layout
 
@@ -212,44 +249,48 @@ class MainWindow(QMainWindow):
         return button
 
     def _home_page(self):
-        page, layout = self._page("Was möchtest du machen?", "Dein Computer ist die Oberfläche. Dein Flipper übernimmt die Hardware.")
-        hero = QFrame()
-        hero.setObjectName("deviceCard")
-        hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(22, 18, 22, 18)
-        heading = QLabel("Dein Flipper")
+        page, layout = self._page("Übersicht", "Gerätebedienung und gespeicherte Dateien.")
+        summary = QFrame()
+        summary.setObjectName("deviceSummary")
+        summary_layout = QHBoxLayout(summary)
+        summary_layout.setContentsMargins(16, 12, 16, 12)
+        details = QVBoxLayout()
+        details.setSpacing(4)
+        heading = QLabel("Flipper Zero")
         heading.setObjectName("cardTitle")
         self.home_device = QLabel(self.device_description)
+        self.home_device.setObjectName("subtitle")
         self.home_device.setWordWrap(True)
-        hero_layout.addWidget(heading)
-        hero_layout.addWidget(self.home_device)
-        layout.addWidget(hero)
-        cards = QGridLayout()
-        cards.setSpacing(14)
+        details.addWidget(heading)
+        details.addWidget(self.home_device)
+        summary_layout.addLayout(details, 1)
+        launch = QPushButton("Bedienen")
+        launch.setProperty("role", "primary")
+        launch.clicked.connect(lambda: self.nav.setCurrentRow(MODULES.index("Remote")))
+        summary_layout.addWidget(launch)
+        layout.addWidget(summary)
+        label = QLabel("Werkzeuge")
+        label.setObjectName("sectionLabel")
+        layout.addWidget(label)
+        self.home_rows = []
+        rows = QWidget()
+        row_layout = QVBoxLayout(rows)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(0)
         tasks = [
-            ("Flipper bedienen", "Live-Display und Tasten. Die Gerätefunktionen direkt vom Desktop aus bedienen.", "Remote", QStyle.StandardPixmap.SP_DesktopIcon),
-            ("Fernbedienungen", "Gespeicherte Infrarot-Fernbedienungen finden und auf dem Flipper öffnen.", "Infrared", QStyle.StandardPixmap.SP_MediaPlay),
-            ("Dateien verwalten", "SD-Karte durchsuchen, Dateien ansehen und Ordner verwalten.", "Storage", QStyle.StandardPixmap.SP_DirIcon),
-            ("Karten & Tags", "Gespeicherte NFC-Dateien ansehen und für die Geräte-App auswählen.", "NFC/RFID", QStyle.StandardPixmap.SP_DriveFDIcon),
-            ("Funk-Signale", "Sub-GHz-Dateien durchsuchen und die Geräte-App bedienen.", "Sub-GHz", QStyle.StandardPixmap.SP_BrowserReload),
-            ("USB-Abläufe", "Gespeicherte Skripte ansehen. Ausführen bleibt eine bewusste Aktion.", "BadUSB", QStyle.StandardPixmap.SP_DriveHDIcon),
+            ("Live-Bedienung", "Geräte-Display, Navigation und Tastatur", "Remote", "remote"),
+            ("Fernbedienungen", "IR-Dateien auf der SD-Karte", "Infrared", "infrared"),
+            ("Dateien", "Ordner, Textvorschau und Speicherverwaltung", "Storage", "folder"),
+            ("Karten & Tags", "Gespeicherte NFC-Dateien", "NFC/RFID", "nfc"),
+            ("Funk-Signale", "Gespeicherte Sub-GHz-Dateien", "Sub-GHz", "radio"),
+            ("USB-Abläufe", "Gespeicherte Skripte", "BadUSB", "usb"),
         ]
-        for index, (title, description, module, icon) in enumerate(tasks):
-            card = QFrame()
-            card.setObjectName("taskCard")
-            inner = QVBoxLayout(card)
-            inner.setContentsMargins(18, 16, 18, 16)
-            button = QPushButton(title)
-            button.setIcon(self.style().standardIcon(icon))
-            button.setObjectName("taskAction")
-            button.clicked.connect(lambda checked=False, name=module: self.nav.setCurrentRow(MODULES.index(name)))
-            text = QLabel(description)
-            text.setWordWrap(True)
-            text.setObjectName("subtitle")
-            inner.addWidget(button)
-            inner.addWidget(text)
-            cards.addWidget(card, index // 2, index % 2)
-        layout.addLayout(cards)
+        for title, description, module, symbol in tasks:
+            row = ActionRow(title, description, symbol)
+            row.clicked.connect(lambda checked=False, name=module: self.nav.setCurrentRow(MODULES.index(name)))
+            row_layout.addWidget(row)
+            self.home_rows.append(row)
+        layout.addWidget(rows)
         layout.addStretch()
         return page
 
@@ -262,7 +303,8 @@ class MainWindow(QMainWindow):
         easy = self.settings.get("easy_mode", True)
         for index, name in enumerate(MODULES):
             self.nav.item(index).setHidden(easy and name in {"System", "Makros"})
-        easy_names = {"Remote": "Flipper bedienen", "Storage": "Dateien", "Infrared": "Fernbedienungen", "NFC/RFID": "Karten & Tags", "Sub-GHz": "Funk-Signale", "BadUSB": "USB-Abläufe"}
+        self.nav.sections[8].setVisible(not easy)
+        easy_names = {"Control Center": "Übersicht", "Remote": "Flipper bedienen", "Storage": "Dateien", "Infrared": "Fernbedienungen", "NFC/RFID": "Karten & Tags", "Sub-GHz": "Funk-Signale", "BadUSB": "USB-Abläufe"}
         for index, name in enumerate(MODULES):
             self.nav.item(index).setText(easy_names.get(name, name) if easy else name)
             title = self.stack.widget(index).findChild(QLabel, "pageTitle")
@@ -331,30 +373,45 @@ class MainWindow(QMainWindow):
 
     def _remote_page(self):
         page, layout = self._page("Remote", "Sieh das Geräte-Display live und bediene den Flipper mit Tasten oder deiner Tastatur.")
-        body = QHBoxLayout()
-        body.setSpacing(22)
+        host = QWidget()
+        host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        host.setMaximumHeight(320)
+        body = QHBoxLayout(host)
+        body.setContentsMargins(0, 8, 0, 0)
+        body.setSpacing(24)
         display = QVBoxLayout()
         self.screen = ScreenView()
-        display.addWidget(self.screen, 1)
+        self.screen.setFixedHeight(256)
+        display.setSpacing(8)
+        display.addWidget(self.screen)
         live_row = QHBoxLayout()
         self.live_button = QPushButton("Live-Ansicht starten")
+        self.live_button.setProperty("role", "primary")
         self.live_button.clicked.connect(self.toggle_live)
         self.device_controls.append(self.live_button)
         live_row.addWidget(self.live_button)
         self.live_status = QLabel("Display noch nicht verbunden")
+        self.live_status.setObjectName("caption")
         live_row.addWidget(self.live_status)
         live_row.addStretch()
         display.addLayout(live_row)
         body.addLayout(display, 3)
         controls = QVBoxLayout()
-        group = QGroupBox("Navigation")
+        group = QGroupBox("Tasten")
         grid = QGridLayout(group)
+        grid.setSpacing(8)
+        grid.setContentsMargins(0, 4, 0, 0)
         for label, key, row, column in [("↑", "up", 0, 1), ("←", "left", 1, 0), ("OK", "ok", 1, 1), ("→", "right", 1, 2), ("↓", "down", 2, 1), ("Zurück", "back", 3, 1)]:
             button = QPushButton(label)
             button.setAccessibleName({"up": "Nach oben", "down": "Nach unten", "left": "Nach links", "right": "Nach rechts", "ok": "OK", "back": "Zurück"}[key])
-            button.setMinimumSize(64, 42)
+            button.setObjectName("remoteKey" if key != "back" else "remoteBack")
+            button.setProperty("center", key == "ok")
+            button.setFixedSize(44, 40) if key != "back" else button.setFixedSize(112, 28)
             button.clicked.connect(lambda checked=False, k=key: self.send_key(k))
-            grid.addWidget(button, row, column)
+            if key == "back":
+                grid.addWidget(button, row, 0, 1, 3, Qt.AlignmentFlag.AlignHCenter)
+            else:
+                grid.addWidget(button, row, column)
             self.device_controls.append(button)
         controls.addWidget(group)
         self.long_press = QCheckBox("Langer Tastendruck")
@@ -364,7 +421,8 @@ class MainWindow(QMainWindow):
         controls.addWidget(keyboard_hint)
         controls.addStretch()
         body.addLayout(controls, 1)
-        layout.addLayout(body, 1)
+        layout.addWidget(host)
+        layout.addStretch()
         for shortcut, key in [("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right"), ("Return", "ok"), ("Backspace", "back"), ("Escape", "back")]:
             binding = QShortcut(QKeySequence(shortcut), page)
             binding.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -373,9 +431,7 @@ class MainWindow(QMainWindow):
         return page
 
     def _browser_page(self, title, root, suffix=None, app_name=None):
-        subtitle = "Echte Dateien vom Gerät. Ordner doppelklicken, um hineinzuwechseln."
-        if app_name:
-            subtitle += " Öffnen startet die Geräte-App; Bedienung über Remote. Expert-Mode erforderlich."
+        subtitle = "Dateien auswählen und auf dem Flipper öffnen." if app_name else "Ordner öffnen, Dateien ansehen und verwalten."
         page, layout = self._page(title, subtitle)
         browser = FileBrowser(root, suffix, app_name)
         browser.browse.connect(lambda path, b=browser: self.browse(b, path))
@@ -390,7 +446,7 @@ class MainWindow(QMainWindow):
 
     def _macros_page(self):
         page, layout = self._page("Makros", "Befehle laufen nacheinander. Der nächste startet erst nach der Geräteantwort. Abbrechen stoppt die Sequenz.")
-        self.macro_select = QComboBox()
+        self.macro_select = CompactComboBox()
         self.macro_select.setAccessibleName("Gespeichertes Makro")
         self.macro_select.currentTextChanged.connect(self.load_macro)
         layout.addWidget(self.macro_select)
@@ -414,12 +470,12 @@ class MainWindow(QMainWindow):
     def _settings_page(self):
         page, layout = self._page("Einstellungen", "Einstellungen und Makros bleiben lokal auf diesem Computer.")
         form = QFormLayout()
-        self.theme = QComboBox()
+        self.theme = CompactComboBox()
         self.theme.addItems(["System", "Hell", "Dunkel"])
         self.theme.setCurrentIndex({"system": 0, "light": 1, "dark": 2}.get(self.settings.get("theme"), 0))
         self.theme.currentIndexChanged.connect(self.save_preferences)
         form.addRow("Darstellung", self.theme)
-        self.start_module = QComboBox()
+        self.start_module = CompactComboBox()
         self.start_module.addItems(MODULES)
         self.start_module.setCurrentText(self.settings.get("start_module", "System"))
         self.start_module.currentTextChanged.connect(self.save_preferences)
@@ -447,40 +503,27 @@ class MainWindow(QMainWindow):
 
     def _apply_settings(self):
         mode = self.settings.get("theme", "system")
-        palette = QPalette(self._system_palette)
-        if mode == "dark":
-            for role, color in [(QPalette.ColorRole.Window, "#252525"), (QPalette.ColorRole.WindowText, "#eeeeee"), (QPalette.ColorRole.Base, "#191919"), (QPalette.ColorRole.AlternateBase, "#303030"), (QPalette.ColorRole.Text, "#eeeeee"), (QPalette.ColorRole.Button, "#303030"), (QPalette.ColorRole.ButtonText, "#eeeeee"), (QPalette.ColorRole.Highlight, "#ae5800"), (QPalette.ColorRole.HighlightedText, "#ffffff")]:
-                palette.setColor(role, QColor(color))
-        elif mode == "light":
-            for role, color in [(QPalette.ColorRole.Window, "#f3f3f3"), (QPalette.ColorRole.WindowText, "#202020"), (QPalette.ColorRole.Base, "#ffffff"), (QPalette.ColorRole.AlternateBase, "#eeeeee"), (QPalette.ColorRole.Text, "#202020"), (QPalette.ColorRole.Button, "#eeeeee"), (QPalette.ColorRole.ButtonText, "#202020"), (QPalette.ColorRole.Highlight, "#b65b00"), (QPalette.ColorRole.HighlightedText, "#ffffff")]:
-                palette.setColor(role, QColor(color))
-        QApplication.setPalette(palette)
-        dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
-        border = "#3c4149" if dark else "#dce0e5"
-        card = "#292d33" if dark else "#ffffff"
-        muted = "#adb4c0" if dark else "#626b79"
-        selected = "#623c20" if dark else "#fff0df"
-        self.setStyleSheet(f"""
-            QMainWindow {{ background: palette(window); }}
-            QLabel#brand {{ font-size: 11px; font-weight: 700; letter-spacing: 1px; color: {muted}; }}
-            QLabel#pageTitle {{ font-size: 26px; font-weight: 700; }}
-            QLabel#subtitle {{ color: {muted}; line-height: 1.4; }}
-            QLabel#cardTitle {{ font-size: 18px; font-weight: 600; }}
-            QFrame#deviceCard, QFrame#taskCard {{ background: {card}; border: 1px solid {border}; border-radius: 12px; }}
-            QWidget#sidebar {{ background: transparent; }}
-            QWidget#sidebar QPushButton {{ text-align: left; border: none; padding: 10px 12px; border-radius: 7px; background: transparent; }}
-            QWidget#sidebar QPushButton:checked {{ background: {selected}; color: #e88730; font-weight: 600; }}
-            QPushButton {{ padding: 7px 13px; }}
-            QPushButton#taskAction {{ text-align: left; font-size: 16px; font-weight: 600; padding: 5px 0; border: none; background: transparent; }}
-            QPushButton#taskAction:hover {{ color: #df7b22; }}
-            QComboBox {{ padding: 5px 9px; }}
-            QTreeWidget {{ border: 1px solid {border}; border-radius: 7px; }}
-            QPlainTextEdit {{ border: 1px solid {border}; border-radius: 7px; padding: 6px; }}
-            QStatusBar {{ color: {muted}; }}
-        """)
+        dark = mode == "dark" or (mode == "system" and self._system_palette.color(QPalette.ColorRole.Window).lightness() < 128)
+        self.tokens = colors(dark)
+        QApplication.setPalette(theme_palette(self.tokens))
+        self.setStyleSheet(stylesheet(self.tokens))
+        self.brand_mark.setPixmap(icon("device", self.tokens['accent']).pixmap(QSize(28, 28)))
+        for index, symbol in enumerate(MODULE_ICONS):
+            self.nav.item(index).setIcon(icon(symbol, self.tokens['secondary'], self.tokens['accent']))
+            self.nav.item(index).setIconSize(QSize(16, 16))
+        for row in self.home_rows:
+            row.tokens = self.tokens
+            row.update()
+        self.screen.stage_color = self.tokens['surface']
+        self.screen.update()
         for browser in self.browsers:
             browser.expert = self.settings.get("expert_mode") is True
+            browser.set_theme(self.tokens)
             browser.update_actions()
+        self._update_connection_identity()
+
+    def _update_connection_identity(self):
+        self.connection_dot.setStyleSheet("color: " + ("#2ea043" if self.connected else self.tokens['muted']) + ";")
 
     def save_preferences(self, *args):
         self.settings.update(theme=["system", "light", "dark"][self.theme.currentIndex()], start_module=self.start_module.currentText(), expert_mode=self.expert.isChecked())
@@ -546,7 +589,11 @@ class MainWindow(QMainWindow):
         def work():
             self._ensure_cli()
             return self.client.send_command(command)
-        return self.submit(command, work, success)
+        labels = {"device_info": "Geräteinformationen laden", "storage read": "Dateivorschau laden",
+                  "storage mkdir": "Ordner erstellen", "storage remove": "Datei löschen",
+                  "input send": "Taste senden", "loader open": "Geräte-App öffnen", "loader info": "Laufende Geräte-App"}
+        label = next((value for prefix, value in labels.items() if command.startswith(prefix)), "Befehl ausführen")
+        return self.submit(label, work, success)
 
     def connect_device(self):
         if not self.ports.currentText():
@@ -602,6 +649,7 @@ class MainWindow(QMainWindow):
                 key, value = line.split(":", 1)
                 values[key.strip()] = value.strip()
                 self.info.addTopLevelItem(QTreeWidgetItem([key.strip(), value.strip()]))
+        self.device_label.setText(values.get("hardware_name", "Flipper Zero"))
         self.device_description = " · ".join(filter(None, [values.get("hardware_name"), values.get("firmware_origin_fork"), values.get("firmware_version"), "USB verbunden"]))
         self.home_device.setText(self.device_description)
 
@@ -736,6 +784,7 @@ class MainWindow(QMainWindow):
     def _clear_device(self):
         self.info.clear()
         self.home_device.setText("Flipper anschließen und verbinden")
+        self.device_label.setText("Kein Gerät")
         self.screen.clear()
         for browser in self.browsers:
             browser.clear()
@@ -746,6 +795,8 @@ class MainWindow(QMainWindow):
         self.ports.setEnabled(not connected and not self.busy)
         self.scan_button.setEnabled(not connected and not self.busy)
         self.connect_button.setEnabled(not connected and not self.busy)
+        self.connect_button.setVisible(not connected)
+        self._update_connection_identity()
         self.disconnect_button.setEnabled(connected)
         self.stop_button.setEnabled(connected and self.busy)
         self.stop_button.setVisible(self.busy)
@@ -786,6 +837,10 @@ class MainWindow(QMainWindow):
 
 def run():
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setStyle("Fusion")
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+    font.setPixelSize(13)
+    app.setFont(font)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("FlipperRemote")
     window = MainWindow()

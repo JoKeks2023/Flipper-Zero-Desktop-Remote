@@ -9,6 +9,7 @@ Start: `flipper-remote` oder `python src/main.py`.
 - `src/core/storage.py`: typisierte Dateieinträge; Pfade mit Leerzeichen.
 - `src/ui/app.py`: Qt-Hauptfenster, Easy Mode und Ablaufsteuerung.
 - `src/ui/browser.py`, `screen.py`, `sidebar.py`: wiederverwendbare native Widgets.
+- `src/ui/theme.py`, `icons.py`, `controls.py`, `action_row.py`: gemeinsame visuelle Tokens, Vektorsymbole und kompakte Bedienelemente.
 - `src/ui/jobs.py`: Qt-Worker; UI-Updates ausschließlich im Hauptthread.
 - `src/persistence/`: bestehende lokale JSON-Dateien, atomare Speicherung.
 
