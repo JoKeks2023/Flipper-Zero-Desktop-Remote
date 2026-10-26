@@ -1,17 +1,19 @@
 [project]
 name = "flipper-zero-desktop-remote"
-version = "0.1.0"
-description = "Desktop remote for Flipper Zero (Momentum) using Flet"
+version = "0.2.0"
+description = "Desktop remote for Flipper Zero (Momentum) using Qt Widgets"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.16"
 dependencies = [
-  "flet>=0.28.0",
-  "flet-desktop>=0.82.2",
+  "PySide6-Essentials==6.12.0",
   "pyserial>=3.5"
 ]
 
+[project.scripts]
+flipper-remote = "main:main"
+
 [project.optional-dependencies]
-dev = []
+dev = ["pyinstaller>=6,<7"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -19,6 +21,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

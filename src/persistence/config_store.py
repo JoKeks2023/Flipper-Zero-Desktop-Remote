@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -17,13 +19,19 @@ class ConfigStore:
     def load_settings(self) -> dict[str, Any]:
         default_settings: dict[str, Any] = {
             "last_port": "",
+            "easy_mode": True,
             "expert_mode": False,
-            "theme": "dark",
+            "theme": "system",
             "accent": "orange",
             "density": "comfort",
-            "start_module": "System",
+            "start_module": "Control Center",
         }
-        return self._load_json(self.settings_file, default_settings)
+        settings = {**default_settings, **self._load_json(self.settings_file, default_settings)}
+        for key, default in default_settings.items():
+            if type(settings.get(key)) is not type(default):
+                settings[key] = default
+        settings["expert_mode"] = settings.get("expert_mode") is True
+        return settings
 
     def save_settings(self, settings: dict[str, Any]) -> None:
         self._save_json(self.settings_file, settings)
@@ -38,7 +46,7 @@ class ConfigStore:
         for key, value in raw.items():
             if isinstance(key, str) and isinstance(value, list):
                 normalized[key] = [str(line).strip() for line in value if str(line).strip()]
-        return normalized or default_macros
+        return normalized
 
     def save_macros(self, macros: dict[str, list[str]]) -> None:
         self._save_json(self.macros_file, macros)
@@ -56,4 +64,14 @@ class ConfigStore:
 
     def _save_json(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=f".{path.name}.", encoding="utf-8", delete=False) as file:
+                temporary = Path(file.name)
+                json.dump(payload, file, indent=2, ensure_ascii=False)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
