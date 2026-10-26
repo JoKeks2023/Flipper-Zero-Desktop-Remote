@@ -1,166 +1,52 @@
-# Build-Anleitung
+# App-Pakete bauen und prüfen
 
-Diese Seite beschreibt, wie du **Flipper Zero Desktop Remote** als native, standalone Anwendung für macOS und Linux baust – ohne dass Python auf dem Zielsystem installiert sein muss.
+Die Release-Pakete werden mit Python 3.12 auf GitHub Actions gebaut:
+[Desktop packages](https://github.com/JoKeks2023/Flipper-Zero-Desktop-Remote/actions/workflows/packages.yml).
+Matrix: macOS 15 arm64, macOS 15 Intel und Ubuntu 24.04 x86_64.
 
----
+## Eigenständige Pakete
 
-## Inhaltsverzeichnis
-
-- [Vorbereitungen](#vorbereitungen)
-- [macOS – .app-Bundle (py2app)](#macos--app-bundle-py2app)
-- [Linux – Executable (PyInstaller)](#linux--executable-pyinstaller)
-- [Linux – Desktop-Integration](#linux--desktop-integration)
-
----
-
-## Vorbereitungen
-
-Stelle sicher, dass du eine funktionierende Entwicklungsumgebung eingerichtet hast (siehe [installation.md](installation.md)):
+Im Checkout auf dem jeweiligen Zielsystem:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e .
+python -m pip install -e '.[dev,mcp]'
+python packaging/collect_licenses.py
+QT_QPA_PLATFORM=offscreen python packaging/create_icons.py
+# macOS:
+pyinstaller --noconfirm packaging/macos/flipper_remote.spec
+# Linux:
+pyinstaller --noconfirm packaging/linux/flipper_remote.spec
 ```
 
----
+Die Lizenzsammlung lädt Notices aus den installierten Distributionen und den passenden offiziellen Qt-Quellen. Fehlen sie im Wheel, wird das zugehörige Source-Archiv geladen. URLs, Prüfsummen und Versionen stehen in `build/release-licenses/BUILD-ENVIRONMENT.json`. Dieses Inventar umfasst auch Build-Werkzeuge; es ist eine Obermenge der tatsächlich gebündelten Komponenten. [Komponenten und Austausch](binary-components.md).
 
-## macOS – .app-Bundle (py2app)
+Qt WebEngine und Tk werden ausgeschlossen. Die Qt-Widgets-Laufzeit bleibt dynamisch geladen. Der eingebettete MCP wird über dasselbe Programm mit `--mcp` gestartet; die App erzeugt dafür eine absolute Client-Konfiguration.
 
-`py2app` erzeugt ein vollständiges macOS-App-Bundle (`.app`), das per Doppelklick gestartet werden kann.
-
-### 1. py2app installieren
+## Verifikation
 
 ```bash
-source .venv/bin/activate
-python -m pip install py2app
+QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v
+# macOS:
+python packaging/smoke_bundle.py 'dist/Flipper Zero Desktop Remote.app/Contents/MacOS/flipper-remote'
+# Linux:
+python packaging/smoke_bundle.py dist/flipper-remote/flipper-remote
 ```
 
-### 2. Build ausführen
+Der Pakettest startet den **erzeugten** MCP-Prozess: Handshake, sechs Tools, verständlicher Fehler ohne Desktop-Verbindung. Anschließend erzeugt er alle echten Qt-Seiten, wechselt beide Themes, prüft die Mindestbreite und lädt die Lizenztexte und das App-Symbol. Dabei verwendet er temporäre Einstellungen und keine USB-Verbindung. `--smoke-test` ist ausschließlich dieser Entwicklercheck.
+
+Für die Geräteabnahme das entpackte Paket regulär starten, verbinden und die betroffenen Wege sichtbar prüfen. CI ersetzt keine Hardware-Abnahme.
+
+## Archivieren und Signieren
+
+macOS: `ditto -c -k --sequesterRsrc --keepParent` erhält die Bundle-Links. Linux: den kompletten Ordner mit `tar -czf` packen. Einzelne Programmdateien reichen nicht aus. Siehe [PyInstaller zu symbolischen Links](https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html#requirements-imposed-by-symbolic-links-in-frozen-application).
+
+Die erste Vorschau verwendet PyInstallers Ad-hoc-Signatur auf macOS. Eine Developer-ID-Signatur und Notarisierung sind noch nicht eingerichtet. Keine App-Store-Veröffentlichung.
+
+## Leichter macOS-Entwicklungslauncher
 
 ```bash
-python packaging/macos/setup.py py2app
+python packaging/macos/create_launcher.py
+open "build/Flipper Zero Desktop Remote.app"
 ```
 
-> Der Build-Vorgang kann einige Minuten dauern.
-
-### 3. Ergebnis
-
-Das fertige Bundle liegt unter:
-
-```
-dist/Flipper Zero Desktop Remote.app
-```
-
-Ins `Applications`-Verzeichnis verschieben oder per Doppelklick starten:
-
-```bash
-open "dist/Flipper Zero Desktop Remote.app"
-```
-
-### Build-Konfiguration
-
-Die Build-Konfiguration befindet sich in `packaging/macos/setup.py`. Dort können u. a. App-Name, Icon und zusätzliche Pakete angepasst werden.
-
-### Hinweise
-
-- Der erste Build lädt ggf. zusätzliche Abhängigkeiten herunter.
-- Für eine Distribution an andere macOS-Nutzer sollte das Bundle signiert werden (erfordert Apple Developer Account).
-- Gatekeeper-Warnung beim ersten Start: **Rechtsklick → Öffnen** wählen.
-
----
-
-## Linux – Executable (PyInstaller)
-
-`PyInstaller` erzeugt eine einzelne ausführbare Datei, die alle Abhängigkeiten enthält.
-
-### 1. PyInstaller installieren
-
-```bash
-source .venv/bin/activate
-python -m pip install pyinstaller
-```
-
-### 2. Build ausführen
-
-```bash
-pyinstaller packaging/linux/flipper_remote.spec
-```
-
-> Der Build-Vorgang kann einige Minuten dauern.
-
-### 3. Ergebnis
-
-Die fertige Executable liegt unter:
-
-```
-dist/flipper-remote
-```
-
-Direkt starten:
-
-```bash
-./dist/flipper-remote
-```
-
-Oder systemweit verfügbar machen:
-
-```bash
-sudo cp dist/flipper-remote /usr/local/bin/flipper-remote
-```
-
-### Build-Konfiguration
-
-Die Spec-Datei `packaging/linux/flipper_remote.spec` enthält die PyInstaller-Konfiguration. Relevante Einstellungen:
-
-| Einstellung | Bedeutung |
-|---|---|
-| `hiddenimports` | Pakete, die PyInstaller nicht automatisch erkennt (`flet`, `serial`, `serial.tools.list_ports`) |
-| `console=False` | Kein Konsolenfenster beim Start |
-| `upx=True` | UPX-Komprimierung für kleinere Dateigröße (UPX muss installiert sein) |
-
-UPX installieren (optional, verkleinert die Executable):
-
-```bash
-sudo apt install upx
-```
-
----
-
-## Linux – Desktop-Integration
-
-Für die Integration ins KDE- oder GNOME-Startmenü steht eine `.desktop`-Datei bereit.
-
-### Desktop-Entry installieren
-
-```bash
-# Desktop-Entry kopieren
-cp packaging/linux/flipper-remote.desktop ~/.local/share/applications/
-
-# Exec-Pfad auf absolute Executable anpassen
-sed -i "s|Exec=flipper-remote|Exec=$(pwd)/dist/flipper-remote|" \
-    ~/.local/share/applications/flipper-remote.desktop
-
-# Desktop-Datenbank aktualisieren
-update-desktop-database ~/.local/share/applications/
-```
-
-Anschließend erscheint **Flipper Zero Desktop Remote** in der Anwendungsübersicht.
-
-### Manuelle Anpassung
-
-Die Datei `packaging/linux/flipper-remote.desktop` kann auch manuell bearbeitet werden:
-
-```ini
-[Desktop Entry]
-Type=Application
-Name=Flipper Zero Desktop Remote
-Comment=Control Flipper Zero from your desktop
-Exec=/absoluter/pfad/zu/dist/flipper-remote
-Icon=flipper-remote
-Terminal=false
-Categories=Utility;Development;
-```
-
-> **Tipp:** Ein eigenes Icon kann unter `~/.local/share/icons/hicolor/256x256/apps/flipper-remote.png` abgelegt werden.
+Dieser Launcher benötigt das Checkout und dessen `.venv`; er ist kein Release-Paket. Nach Verschieben des Checkout neu erstellen.

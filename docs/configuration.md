@@ -1,151 +1,29 @@
-# Konfiguration
+# Lokale Daten
 
-Diese Seite beschreibt alle persistenten Einstellungen und Dateien von **Flipper Zero Desktop Remote**.
-
----
-
-## Inhaltsverzeichnis
-
-- [Speicherorte](#speicherorte)
-- [settings.json](#settingsjson)
-- [macros.json](#macrosjson)
-- [Einstellungen zurücksetzen](#einstellungen-zurücksetzen)
-- [Makros manuell bearbeiten](#makros-manuell-bearbeiten)
-
----
-
-## Speicherorte
-
-Die App speichert alle Konfigurationsdateien plattformkonform:
-
-| Betriebssystem | Pfad |
+| Plattform | Verzeichnis |
 |---|---|
-| **macOS** | `~/Library/Application Support/Flipper Zero Desktop Remote/` |
-| **Linux** | `$XDG_CONFIG_HOME/flipper-zero-desktop-remote/` oder `~/.config/flipper-zero-desktop-remote/` |
+| macOS | `~/Library/Application Support/Flipper Zero Desktop Remote/` |
+| Linux | `$XDG_CONFIG_HOME/flipper-zero-desktop-remote/` oder `~/.config/flipper-zero-desktop-remote/` |
 
-Die Verzeichnisse werden beim ersten Start automatisch angelegt.
+`settings.json`: `last_port`, `theme` (`system`, `light`, `dark`), `start_module`,
+`expert_mode` (Boolean), `easy_mode` (Boolean), `auto_connect` (Boolean),
+`dashboard_refresh_seconds` (`0`, `5`, `10`, `30`), `mcp_enabled` und `mcp_control`
+(Booleans, jeweils standardmäßig aus). `0` bedeutet manuelle Aktualisierung.
+Auto-Connect ist ebenfalls standardmäßig aus und verwendet nur den zuletzt gespeicherten,
+tatsächlich gefundenen Port. Vorhandene Einstellungen und Makros
+werden weiter gelesen; die alten Optionen `accent`/`density` werden erhalten,
+aber von der nativen Oberfläche nicht mehr ausgewertet.
 
----
+`macros.json`: Objekt von Namen zu Listen mit CLI-Befehlen. Leere Makrolisten
+bleiben nach Neustart leer. Ohne Expert-Mode sind nur lesende Abfragen und
+Remote-Eingaben erlaubt; freie Makros benötigen Expert-Mode und Bestätigung.
+Die Befehle können auf dem Gerät Änderungen ausführen. Ein Fehler stoppt die Sequenz.
 
-## settings.json
+Speicherung erfolgt über eine temporäre Datei mit anschließendem atomarem Austausch.
+Ungültiges JSON fällt beim Laden auf Defaults zurück; die Originaldatei wird dabei
+nicht überschrieben. Schreibfehler werden in der App angezeigt.
 
-Die Datei `settings.json` speichert die App-Einstellungen. Sie wird beim Start geladen und bei jeder Änderung sofort geschrieben.
-
-### Standardinhalt
-
-```json
-{
-  "last_port": "",
-  "expert_mode": false,
-  "theme": "dark",
-  "accent": "orange",
-  "density": "comfort",
-  "start_module": "System"
-}
-```
-
-### Felder
-
-| Schlüssel | Typ | Mögliche Werte | Beschreibung |
-|---|---|---|---|
-| `last_port` | String | Portpfad, z. B. `/dev/cu.usbmodem14301` | Zuletzt verwendeter Serial-Port |
-| `expert_mode` | Boolean | `true` / `false` | Expert-Mode aktiv (schaltet NFC/RFID, Sub-GHz, BadUSB frei) |
-| `theme` | String | `"dark"` / `"light"` | App-Theme |
-| `accent` | String | `"orange"` / `"amber"` / `"red"` | Akzentfarbe der UI |
-| `density` | String | `"comfort"` / `"compact"` | UI-Dichte (Abstände und Schaltflächenhöhe) |
-| `start_module` | String | `"System"` / `"Remote"` / `"Storage"` / … | Aktiver Tab beim Start |
-
----
-
-## macros.json
-
-Die Datei `macros.json` speichert alle benutzerdefinierten Makros. Ein Makro ist eine benannte Liste von Flipper-CLI-Befehlen, die sequenziell gesendet werden.
-
-### Standardinhalt
-
-```json
-{
-  "Status": [
-    "device_info",
-    "storage list /"
-  ],
-  "Quick Reboot": [
-    "power reboot"
-  ]
-}
-```
-
-### Format
-
-```json
-{
-  "Makro-Name": [
-    "befehl1",
-    "befehl2",
-    "..."
-  ]
-}
-```
-
-- **Makro-Name:** Beliebiger String, darf Leerzeichen enthalten.
-- **Befehle:** Jede Zeile entspricht einem Flipper-CLI-Befehl (wie er auch direkt in die Konsole eingegeben werden würde).
-- Leere Zeilen werden beim Laden ignoriert.
-- Ungültige Einträge (falsche Typen) werden beim Laden gefiltert.
-
-### Beispiel mit allen Modul-Typen
-
-```json
-{
-  "System-Check": [
-    "device_info",
-    "storage list /"
-  ],
-  "Vibro-Test": [
-    "vibro 1",
-    "vibro 0"
-  ],
-  "Navigation-Demo": [
-    "input send up short",
-    "input send down short",
-    "input send ok short",
-    "input send back short"
-  ],
-  "Reboot-Sequenz": [
-    "power reboot"
-  ]
-}
-```
-
----
-
-## Einstellungen zurücksetzen
-
-Um alle Einstellungen auf die Standardwerte zurückzusetzen, die `settings.json` löschen:
-
-```bash
-# macOS
-rm ~/Library/Application\ Support/Flipper\ Zero\ Desktop\ Remote/settings.json
-
-# Linux
-rm ~/.config/flipper-zero-desktop-remote/settings.json
-```
-
-Beim nächsten Start werden die Standardwerte verwendet und eine neue `settings.json` angelegt.
-
----
-
-## Makros manuell bearbeiten
-
-Die `macros.json` kann mit jedem Texteditor direkt bearbeitet werden. Die App lädt die Datei beim Start sowie über den **Laden**-Button im Makros-Tab neu.
-
-Pfad öffnen:
-
-```bash
-# macOS
-open ~/Library/Application\ Support/Flipper\ Zero\ Desktop\ Remote/
-
-# Linux
-xdg-open ~/.config/flipper-zero-desktop-remote/
-```
-
-> **Tipp:** Beim manuellen Bearbeiten auf gültiges JSON achten. Fehler in der Datei führen dazu, dass die Standardmakros geladen werden.
+Die vier Einstellungsbereiche sind **Allgemein**, **Gerät**, **KI-Anbindung** und
+**Über**. Änderungen werden sofort gespeichert. Easy Mode startet mit der Übersicht;
+die Startseitenwahl für Alle Werkzeuge bleibt gespeichert. Die kopierbare Diagnose
+enthält App-/Systemversionen und Verbindungszustände, keine Gerätekennung oder Dateiinhalte.

@@ -1,1472 +1,918 @@
 from __future__ import annotations
 
-import asyncio
-import time
+import posixpath
+import shlex
+import sys
+import threading
+from datetime import datetime
 
-import flet as ft
-
-from core.capabilities import (
-    FEATURE_BADUSB,
-    FEATURE_INFRARED,
-    FEATURE_MACROS,
-    FEATURE_NFC_RFID,
-    FEATURE_REMOTE,
-    FEATURE_STORAGE,
-    FEATURE_SUBGHZ,
-    FEATURE_SYSTEM,
-    build_capabilities,
+from PySide6.QtCore import Qt, QSize, QThreadPool, QTimer
+from PySide6.QtGui import QAction, QColor, QFontDatabase, QIcon, QPalette, QKeySequence, QShortcut
+from importlib.resources import files
+from PySide6.QtWidgets import (
+    QApplication, QCheckBox, QComboBox, QDockWidget, QFormLayout, QGridLayout,
+    QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
+    QFrame, QProgressBar, QScrollArea, QStyle, QSizePolicy,
+    QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
+    QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
+
 from core.connection_manager import scan_flipper_ports
 from core.flipper_api import FlipperAPI
 from core.serial_client import SerialClient
+from core.rpc_display import RpcDisplay
+from core.storage import quote_path
+from core.device_status import read_device_status
 from persistence.config_store import ConfigStore
-
-
-def run(page: ft.Page) -> None:
-    app_name = "Flipper Zero Desktop Remote"
-    page.title = app_name
-    page.scroll = ft.ScrollMode.AUTO
-    page.padding = 20
-    page.window_width = 1240
-    page.window_height = 860
-
-    serial_client = SerialClient()
-    api = FlipperAPI(serial_client.send_command)
-    config_store = ConfigStore(app_name)
-    settings = config_store.load_settings()
-    macros = config_store.load_macros()
-
-    module_order = [
-        "System",
-        "Remote",
-        "Storage",
-        "Infrared",
-        "NFC/RFID",
-        "Sub-GHz",
-        "BadUSB",
-        "Makros",
-    ]
-    module_to_feature = {
-        "System": FEATURE_SYSTEM,
-        "Remote": FEATURE_REMOTE,
-        "Storage": FEATURE_STORAGE,
-        "Infrared": FEATURE_INFRARED,
-        "NFC/RFID": FEATURE_NFC_RFID,
-        "Sub-GHz": FEATURE_SUBGHZ,
-        "BadUSB": FEATURE_BADUSB,
-        "Makros": FEATURE_MACROS,
-    }
-
-    log_lines: list[str] = []
-    max_log_lines = 2000
-    selected_module = str(settings.get("start_module", "System"))
-    if selected_module not in module_order:
-        selected_module = "System"
-    selected_main_view = 0
-
-    def accent_color() -> str:
-        mapping = {
-            "orange": ft.Colors.ORANGE_400,
-            "amber": ft.Colors.AMBER_400,
-            "red": ft.Colors.RED_400,
-        }
-        return mapping.get(str(settings.get("accent", "orange")), ft.Colors.ORANGE_400)
-
-    def muted_color() -> str:
-        return ft.Colors.GREY_400
-
-    def density_value() -> str:
-        value = str(settings.get("density", "comfort"))
-        return value if value in {"comfort", "compact"} else "comfort"
-
-    def spacing_value() -> int:
-        return 12 if density_value() == "comfort" else 8
-
-    def control_height() -> int:
-        return 44 if density_value() == "comfort" else 36
-
-    def apply_theme() -> None:
-        mode = str(settings.get("theme", "dark"))
-        page.theme_mode = ft.ThemeMode.DARK if mode == "dark" else ft.ThemeMode.LIGHT
-
-    capabilities = build_capabilities(bool(settings.get("expert_mode", False)))
-    apply_theme()
-
-    header = ft.Text(app_name, size=30, weight=ft.FontWeight.BOLD)
-    subtitle = ft.Text(
-        "Steuere Flipper-Module am Desktop über klare Aktionen statt Menü-Navigation.",
-        color=muted_color(),
-    )
-
-    status_chip = ft.Container(
-        content=ft.Text("Nicht verbunden", color=ft.Colors.WHITE),
-        bgcolor=ft.Colors.RED_700,
-        padding=8,
-        border_radius=10,
-    )
-
-    port_dropdown = ft.Dropdown(label="Flipper Port", width=420, options=[])
-    expert_mode_checkbox = ft.Checkbox(
-        label="Expert-Mode (NFC/Sub-GHz/BadUSB freischalten)",
-        value=bool(settings.get("expert_mode", False)),
-    )
-    theme_dropdown = ft.Dropdown(
-        label="Theme",
-        width=180,
-        value=str(settings.get("theme", "dark")),
-        options=[ft.dropdown.Option("dark"), ft.dropdown.Option("light")],
-    )
-    accent_dropdown = ft.Dropdown(
-        label="Accent",
-        width=180,
-        value=str(settings.get("accent", "orange")),
-        options=[ft.dropdown.Option("orange"), ft.dropdown.Option("amber"), ft.dropdown.Option("red")],
-    )
-    density_dropdown = ft.Dropdown(
-        label="Dichte",
-        width=180,
-        value=density_value(),
-        options=[ft.dropdown.Option("comfort"), ft.dropdown.Option("compact")],
-    )
-    start_module_dropdown = ft.Dropdown(
-        label="Startmodul",
-        width=220,
-        value=selected_module,
-        options=[ft.dropdown.Option(m) for m in module_order],
-    )
-
-    log_console = ft.TextField(
-        label="Aktivitäten",
-        multiline=True,
-        min_lines=12,
-        max_lines=12,
-        read_only=True,
-        value="",
-    )
-    mini_log_console = ft.TextField(
-        label="Letzte Aktivitäten",
-        multiline=True,
-        min_lines=6,
-        max_lines=6,
-        read_only=True,
-        value="",
-    )
-
-    common_path_options = ["/", "/ext", "/ext/apps", "/ext/infrared", "/ext/nfc", "/ext/subghz", "/ext/badusb"]
-
-    system_path_input = ft.Dropdown(
-        label="Ordner",
-        width=320,
-        value="/",
-        options=[ft.dropdown.Option(path) for path in common_path_options],
-    )
-    storage_list_path_input = ft.Dropdown(
-        label="Ordner",
-        width=320,
-        value="/",
-        options=[ft.dropdown.Option(path) for path in common_path_options],
-    )
-    storage_mkdir_path = ft.Dropdown(
-        label="Neuer Ordner",
-        width=320,
-        value="/ext/new_folder",
-        options=[
-            ft.dropdown.Option("/ext/new_folder"),
-            ft.dropdown.Option("/ext/apps/new_folder"),
-            ft.dropdown.Option("/ext/infrared/new_folder"),
-        ],
-    )
-    storage_remove_path = ft.Dropdown(
-        label="Element löschen",
-        width=320,
-        value="/ext/old_file.txt",
-        options=[
-            ft.dropdown.Option("/ext/old_file.txt"),
-            ft.dropdown.Option("/ext/notes.txt"),
-            ft.dropdown.Option("/ext/new_folder"),
-        ],
-    )
-    storage_read_path = ft.Dropdown(
-        label="Datei",
-        width=320,
-        value="/ext/notes.txt",
-        options=[
-            ft.dropdown.Option("/ext/notes.txt"),
-            ft.dropdown.Option("/ext/infrared/example.ir"),
-            ft.dropdown.Option("/ext/badusb/script.txt"),
-        ],
-    )
-
-    ir_file_path = ft.Dropdown(
-        label="IR-Datei",
-        width=360,
-        value="/ext/infrared/example.ir",
-        options=[
-            ft.dropdown.Option("/ext/infrared/example.ir"),
-            ft.dropdown.Option("/ext/infrared/tv.ir"),
-            ft.dropdown.Option("/ext/infrared/ac.ir"),
-        ],
-    )
-    nfc_file_path = ft.Dropdown(
-        label="NFC-Datei",
-        width=360,
-        value="/ext/nfc/example.nfc",
-        options=[
-            ft.dropdown.Option("/ext/nfc/example.nfc"),
-            ft.dropdown.Option("/ext/nfc/card1.nfc"),
-            ft.dropdown.Option("/ext/nfc/card2.nfc"),
-        ],
-    )
-    subghz_file_path = ft.Dropdown(
-        label="Funk-Datei",
-        width=360,
-        value="/ext/subghz/example.sub",
-        options=[
-            ft.dropdown.Option("/ext/subghz/example.sub"),
-            ft.dropdown.Option("/ext/subghz/garage.sub"),
-            ft.dropdown.Option("/ext/subghz/doorbell.sub"),
-        ],
-    )
-    badusb_script_path = ft.Dropdown(
-        label="Ablauf-Datei",
-        width=360,
-        value="/ext/badusb/script.txt",
-        options=[
-            ft.dropdown.Option("/ext/badusb/script.txt"),
-            ft.dropdown.Option("/ext/badusb/test.txt"),
-            ft.dropdown.Option("/ext/badusb/demo.txt"),
-        ],
-    )
-    badusb_confirm = ft.Checkbox(label="Ich bestätige kontrollierte/legitime Nutzung", value=False)
-
-    macro_select = ft.Dropdown(label="Gespeichertes Makro", width=280, options=[])
-    macro_name_input = ft.TextField(label="Makro-Name", width=280)
-    macro_commands_input = ft.TextField(
-        label="Makro-Schritte (eine Zeile = ein Schritt)",
-        multiline=True,
-        min_lines=7,
-        max_lines=9,
-    )
-
-    main_nav_container = ft.Container()
-    module_tabs = ft.Tabs(
-        content=ft.Row([ft.Tab(label=name) for name in module_order]),
-        length=len(module_order),
-        selected_index=module_order.index(selected_module),
-        animation_duration=120,
-    )
-
-    main_content = ft.Container(expand=True)
-    module_panel_content = ft.Container(expand=True)
-    scan_status_text = ft.Text("Dateien: nicht geladen", color=muted_color(), size=12)
-
-    scan_dirs = ["/ext", "/ext/infrared", "/ext/nfc", "/ext/subghz", "/ext/badusb"]
-    storage_scan_active = False
-    storage_scan_current_dir = ""
-    storage_scan_last_activity = 0.0
-    storage_scan_paths: set[str] = set()
-    ir_paths: set[str] = set()
-    nfc_paths: set[str] = set()
-    subghz_paths: set[str] = set()
-    badusb_paths: set[str] = set()
-
-    def notify(message: str, error: bool = False) -> None:
-        page.snack_bar = ft.SnackBar(
-            content=ft.Text(message),
-            bgcolor=ft.Colors.RED_700 if error else ft.Colors.with_opacity(0.9, accent_color()),
-            open=True,
-        )
-
-    def update_log_views() -> None:
-        log_console.value = "\n".join(log_lines)
-        mini_log_console.value = "\n".join(log_lines[-60:])
-
-    def set_scan_status(message: str, error: bool = False) -> None:
-        scan_status_text.value = message
-        scan_status_text.color = ft.Colors.RED_300 if error else muted_color()
-
-    def append_log(line: str) -> None:
-        log_lines.append(line)
-        if len(log_lines) > max_log_lines:
-            del log_lines[: len(log_lines) - max_log_lines]
-        update_log_views()
-
-    def set_dropdown_values(dropdown: ft.Dropdown, values: set[str], fallback: str) -> None:
-        merged = sorted({value for value in values if value} | {fallback})
-        dropdown.options = [ft.dropdown.Option(value) for value in merged]
-        if not dropdown.value or str(dropdown.value) not in merged:
-            dropdown.value = merged[0]
-
-    def apply_scanned_paths() -> None:
-        if storage_scan_paths:
-            set_dropdown_values(storage_remove_path, storage_scan_paths, "/ext/old_file.txt")
-            set_dropdown_values(storage_read_path, storage_scan_paths, "/ext/notes.txt")
-
-        if ir_paths:
-            set_dropdown_values(ir_file_path, ir_paths, "/ext/infrared/example.ir")
-        if nfc_paths:
-            set_dropdown_values(nfc_file_path, nfc_paths, "/ext/nfc/example.nfc")
-        if subghz_paths:
-            set_dropdown_values(subghz_file_path, subghz_paths, "/ext/subghz/example.sub")
-        if badusb_paths:
-            set_dropdown_values(badusb_script_path, badusb_paths, "/ext/badusb/script.txt")
-
-    def normalize_storage_path(current_dir: str, entry: str) -> str:
-        value = entry.strip().strip('"').strip("'")
-        if not value or value in {".", ".."}:
-            return ""
-        if value.startswith("/"):
-            return value
-        return f"{current_dir.rstrip('/')}/{value}"
-
-    def extract_storage_entry(line: str) -> str:
-        text = line.strip()
-        if not text:
-            return ""
-        if text.startswith(">") or text.startswith("["):
-            return ""
-        lowered = text.lower()
-        if "storage" in lowered and ("error" in lowered or "usage" in lowered):
-            return ""
-
-        tokens = text.replace("\t", " ").split()
-        if not tokens:
-            return ""
-        candidate = tokens[-1]
-        return "" if candidate in {"-", "|"} else candidate
-
-    def process_scan_line(line: str) -> None:
-        nonlocal storage_scan_current_dir, storage_scan_last_activity, storage_scan_active
-        if not storage_scan_active:
-            return
-
-        storage_scan_last_activity = time.time()
-        stripped = line.strip()
-        if stripped.startswith("> storage list "):
-            storage_scan_current_dir = stripped.replace("> storage list ", "", 1).strip() or "/"
-            return
-        if stripped.startswith(">"):
-            return
-        if not storage_scan_current_dir:
-            return
-
-        entry = extract_storage_entry(stripped)
-        if not entry:
-            return
-        full_path = normalize_storage_path(storage_scan_current_dir, entry)
-        if not full_path or full_path.endswith("/"):
-            return
-
-        storage_scan_paths.add(full_path)
-        lower_path = full_path.lower()
-        if lower_path.endswith(".ir") or "/infrared/" in lower_path:
-            ir_paths.add(full_path)
-        if lower_path.endswith(".nfc") or "/nfc/" in lower_path:
-            nfc_paths.add(full_path)
-        if lower_path.endswith(".sub") or "/subghz/" in lower_path:
-            subghz_paths.add(full_path)
-        if lower_path.endswith(".txt") or "/badusb/" in lower_path:
-            badusb_paths.add(full_path)
-
-    def finish_scan_if_idle() -> None:
-        nonlocal storage_scan_active
-        if not storage_scan_active:
-            return
-        if (time.time() - storage_scan_last_activity) < 1.2:
-            return
-        storage_scan_active = False
-        apply_scanned_paths()
-        found_total = len(storage_scan_paths)
-        set_scan_status(f"Dateien gefunden: {found_total}")
-        notify("Dateiliste aktualisiert")
-        page.update()
-
-    def update_connection_status() -> None:
-        if serial_client.is_connected:
-            status_chip.content = ft.Text("Verbunden", color=ft.Colors.WHITE)
-            status_chip.bgcolor = ft.Colors.GREEN_700
-        else:
-            status_chip.content = ft.Text("Nicht verbunden", color=ft.Colors.WHITE)
-            status_chip.bgcolor = ft.Colors.RED_700
-
-    def panel_card(title: str, subtitle_text: str, body: list[ft.Control]) -> ft.Control:
-        return ft.Container(
-            padding=14,
-            border_radius=14,
-            border=ft.border.all(1, ft.Colors.with_opacity(0.24, accent_color())),
-            bgcolor=ft.Colors.with_opacity(0.06, accent_color()),
-            content=ft.Column(
-                spacing=spacing_value(),
-                controls=[
-                    ft.Text(title, size=19, weight=ft.FontWeight.BOLD),
-                    ft.Text(subtitle_text, color=muted_color()),
-                    *body,
-                ],
-            ),
-        )
-
-    def is_enabled(feature_key: str) -> bool:
-        capability = capabilities.get(feature_key)
-        return bool(capability and capability.enabled)
-
-    def feature_hint(feature_key: str) -> str:
-        capability = capabilities.get(feature_key)
-        return capability.hint if capability else "Feature-Zustand unbekannt"
-
-    def switch_to_settings(_: ft.ControlEvent) -> None:
-        nonlocal selected_main_view
-        selected_main_view = 2
-        refresh_main_view()
-        page.update()
-
-    def back_to_home(_: ft.ControlEvent) -> None:
-        nonlocal selected_main_view
-        selected_main_view = 0
-        refresh_main_view()
-        page.update()
-
-    def on_main_nav_click(index: int) -> None:
-        nonlocal selected_main_view
-        selected_main_view = index
-        refresh_main_view()
-        page.update()
-
-    def build_main_nav() -> ft.Control:
-        controls: list[ft.Control] = []
-        entries = [("Übersicht", 0), ("Module", 1), ("Einstellungen", 2)]
-        for label, index in entries:
-            is_active = selected_main_view == index
-            if is_active:
-                controls.append(
-                    ft.ElevatedButton(
-                        label,
-                        on_click=lambda _, idx=index: on_main_nav_click(idx),
-                        height=control_height(),
-                    )
-                )
-            else:
-                controls.append(
-                    ft.OutlinedButton(
-                        label,
-                        on_click=lambda _, idx=index: on_main_nav_click(idx),
-                        height=control_height(),
-                    )
-                )
-        return ft.Row(wrap=True, spacing=8, run_spacing=8, controls=controls)
-
-    def disabled_feature_panel(module_name: str, feature_key: str) -> ft.Control:
-        return panel_card(
-            f"{module_name} deaktiviert",
-            feature_hint(feature_key),
-            [
-                ft.Text("Aktiviere den Expert-Mode in Settings, falls du dieses Modul nutzen willst."),
-                ft.OutlinedButton("Zu Settings", on_click=switch_to_settings, height=control_height()),
-            ],
-        )
-
-    def guarded_call(feature_key: str, callback, action_label: str = "Aktion") -> bool:
-        if not is_enabled(feature_key):
-            message = feature_hint(feature_key)
-            append_log(f"[INFO] {message}")
-            notify(message, error=True)
-            return False
-        if not serial_client.is_connected:
-            append_log("[WARN] Kein Flipper verbunden")
-            notify("Kein Flipper verbunden. Bitte in Settings verbinden.", error=True)
-            return False
-        try:
-            callback()
-            append_log(f"[OK] {action_label}")
-            notify(action_label)
-            return True
-        except Exception as exc:
-            append_log(f"[ERROR] {exc}")
-            notify(f"Fehler bei {action_label}: {exc}", error=True)
-            return False
-
-    def perform_scan() -> None:
-        ports = scan_flipper_ports()
-        port_dropdown.options = [ft.dropdown.Option(port) for port in ports]
-        last_port = str(settings.get("last_port", ""))
-        if last_port and last_port in ports:
-            port_dropdown.value = last_port
-        elif ports and not port_dropdown.value:
-            port_dropdown.value = ports[0]
-
-        if ports:
-            append_log(f"[INFO] Gefundene Ports: {', '.join(ports)}")
-            notify(f"{len(ports)} Port(s) gefunden")
-        else:
-            append_log("[WARN] Keine passenden Flipper-Ports gefunden")
-            notify("Keine passenden Flipper-Ports gefunden", error=True)
-
-    def refresh_file_lists(_: ft.ControlEvent | None = None) -> None:
-        nonlocal storage_scan_active, storage_scan_current_dir, storage_scan_last_activity
-
-        def start_scan() -> None:
-            nonlocal storage_scan_active, storage_scan_current_dir, storage_scan_last_activity
-            storage_scan_active = True
-            storage_scan_current_dir = ""
-            storage_scan_last_activity = time.time()
-            storage_scan_paths.clear()
-            ir_paths.clear()
-            nfc_paths.clear()
-            subghz_paths.clear()
-            badusb_paths.clear()
-            for directory in scan_dirs:
-                api.storage_list(directory)
-
-        success = guarded_call(FEATURE_STORAGE, start_scan, "Dateien werden geladen")
-        if success:
-            append_log("[INFO] Dateiliste wird vom Flipper aktualisiert")
-            set_scan_status("Dateien werden geladen …")
-        else:
-            set_scan_status("Dateien nicht geladen", error=True)
-        page.update()
-
-    def connect_selected_port() -> None:
-        selected_port = (port_dropdown.value or "").strip()
-        if not selected_port:
-            append_log("[WARN] Bitte zuerst einen Port auswählen")
-            notify("Bitte zuerst einen Port auswählen", error=True)
-            return
-        try:
-            serial_client.connect(selected_port)
-            settings["last_port"] = selected_port
-            config_store.save_settings(settings)
-            append_log(f"[INFO] Verbindung hergestellt: {selected_port}")
-            notify(f"Verbunden: {selected_port}")
-        except Exception as exc:
-            append_log(f"[ERROR] Verbindung fehlgeschlagen: {exc}")
-            notify(f"Verbindung fehlgeschlagen: {exc}", error=True)
-        update_connection_status()
-
-    def disconnect() -> None:
-        serial_client.disconnect()
-        update_connection_status()
-        set_scan_status("Dateien: nicht geladen")
-        notify("Verbindung getrennt")
-
-    def refresh_macro_dropdown() -> None:
-        macro_select.options = [ft.dropdown.Option(name) for name in sorted(macros.keys())]
-        if macro_select.value not in macros and macro_select.options:
-            macro_select.value = macro_select.options[0].key
-
-    def load_selected_macro(_: ft.ControlEvent) -> None:
-        selected_name = (macro_select.value or "").strip()
-        if selected_name and selected_name in macros:
-            macro_name_input.value = selected_name
-            macro_commands_input.value = "\n".join(macros[selected_name])
-            page.update()
-
-    def save_macro(_: ft.ControlEvent) -> None:
-        name = (macro_name_input.value or "").strip()
-        commands = [line.strip() for line in (macro_commands_input.value or "").splitlines() if line.strip()]
-        if not name:
-            append_log("[WARN] Makro-Name fehlt")
-            page.update()
-            return
-        if not commands:
-            append_log("[WARN] Makro enthält keine Schritte")
-            page.update()
-            return
-
-        macros[name] = commands
-        config_store.save_macros(macros)
-        refresh_macro_dropdown()
-        macro_select.value = name
-        append_log(f"[INFO] Makro gespeichert: {name}")
-        page.update()
-
-    def delete_macro(_: ft.ControlEvent) -> None:
-        selected = (macro_select.value or "").strip()
-        if not selected:
-            append_log("[WARN] Kein Makro ausgewählt")
-            page.update()
-            return
-
-        if selected in macros:
-            del macros[selected]
-            config_store.save_macros(macros)
-            refresh_macro_dropdown()
-            if macros:
-                next_name = sorted(macros.keys())[0]
-                macro_select.value = next_name
-                macro_name_input.value = next_name
-                macro_commands_input.value = "\n".join(macros[next_name])
-            else:
-                macro_select.value = None
-                macro_name_input.value = ""
-                macro_commands_input.value = ""
-            append_log(f"[INFO] Makro gelöscht: {selected}")
-        page.update()
-
-    def run_macro(_: ft.ControlEvent) -> None:
-        selected = (macro_select.value or "").strip()
-        if not selected:
-            append_log("[WARN] Kein Makro ausgewählt")
-            page.update()
-            return
-
-        commands = macros.get(selected, [])
-        if not commands:
-            append_log("[WARN] Makro ist leer")
-            page.update()
-            return
-
-        def execute() -> None:
-            for command in commands:
-                api.raw(command)
-
-        success = guarded_call(FEATURE_MACROS, execute, f"Makro gestartet: {selected}")
-        if success:
-            append_log(f"[INFO] Makro gestartet: {selected} ({len(commands)} Schritte)")
-        page.update()
-
-    def run_macro_by_name(name: str) -> None:
-        if name in macros:
-            macro_select.value = name
-            commands = macros.get(name, [])
-            if not commands:
-                append_log(f"[WARN] Makro ist leer: {name}")
-                notify(f"Makro ist leer: {name}", error=True)
-                return
-
-            def execute() -> None:
-                for command in commands:
-                    api.raw(command)
-
-            success = guarded_call(FEATURE_MACROS, execute, f"Makro gestartet: {name}")
-            if success:
-                append_log(f"[INFO] Makro gestartet: {name} ({len(commands)} Schritte)")
-        else:
-            append_log(f"[WARN] Makro nicht gefunden: {name}")
-            notify(f"Makro nicht gefunden: {name}", error=True)
-
-    def required_path(value: str, label: str) -> str | None:
-        clean = (value or "").strip()
-        if clean:
-            return clean
-        append_log(f"[WARN] {label} fehlt")
-        notify(f"{label} fehlt", error=True)
-        return None
-
-    def module_card(module_name: str, icon: ft.IconData) -> ft.Control:
-        feature_key = module_to_feature[module_name]
-        enabled = is_enabled(feature_key)
-        status = "Aktiv" if enabled else "Deaktiviert"
-        status_color = ft.Colors.GREEN_400 if enabled else ft.Colors.GREY_500
-
-        def open_module(_: ft.ControlEvent) -> None:
-            nonlocal selected_module, selected_main_view
-            selected_module = module_name
-            module_tabs.selected_index = module_order.index(module_name)
-            selected_main_view = 1
-            settings["start_module"] = module_name
-            start_module_dropdown.value = module_name
-            config_store.save_settings(settings)
-            refresh_main_view()
-            page.update()
-
-        return ft.ElevatedButton(
-            content=ft.Column(
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                alignment=ft.MainAxisAlignment.CENTER,
-                spacing=6,
-                controls=[
-                    ft.Icon(icon, size=24, color=accent_color() if enabled else ft.Colors.GREY_500),
-                    ft.Text(module_name, weight=ft.FontWeight.W_600),
-                    ft.Text(status, color=status_color, size=12),
-                ],
-            ),
-            height=115 if density_value() == "comfort" else 100,
-            width=210,
-            on_click=open_module,
-        )
-
-    def build_home_view() -> ft.Control:
-        cards = [
-            module_card("System", ft.Icons.DEVELOPER_MODE),
-            module_card("Remote", ft.Icons.GAMEPAD_ROUNDED),
-            module_card("Storage", ft.Icons.FOLDER_ROUNDED),
-            module_card("Infrared", ft.Icons.SETTINGS_REMOTE_ROUNDED),
-            module_card("NFC/RFID", ft.Icons.NFC_ROUNDED),
-            module_card("Sub-GHz", ft.Icons.NETWORK_CELL_ROUNDED),
-            module_card("BadUSB", ft.Icons.USB_ROUNDED),
-            module_card("Makros", ft.Icons.AUTO_MODE_ROUNDED),
+from ui.browser import FileBrowser
+from ui.jobs import Job
+from ui.screen import ScreenView
+from ui.sidebar import Sidebar
+from ui.icons import icon, MODULE_ICONS
+from ui.action_row import ActionRow
+from ui.controls import CompactComboBox
+from ui.dashboard import DeviceDashboard
+from ui.mcp_controller import MCPController
+from ui.settings_page import SettingsTabs
+from flipper_mcp.ipc import LocalBridge
+from ui.theme import colors, palette as theme_palette, stylesheet
+
+APP_NAME = "Flipper Zero Desktop Remote"
+MODULES = ["Control Center", "System", "Remote", "Storage", "Infrared", "NFC/RFID", "Sub-GHz", "BadUSB", "Makros", "Einstellungen"]
+
+
+def macro_allowed(command: str, expert: bool) -> bool:
+    if any(ord(c) < 32 or ord(c) == 127 for c in command):
+        return False
+    if expert:
+        return True
+    if any(c in command for c in "|;&"):
+        return False
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    if not parts:
+        return False
+    if parts[0] in {"device_info", "help", "uptime", "free"}:
+        return len(parts) == 1
+    if parts == ["loader", "info"]:
+        return True
+    if len(parts) == 3 and parts[:2] in [["storage", sub] for sub in ("list", "read", "stat", "info")]:
+        return parts[2].startswith("/")
+    return (len(parts) == 4 and parts[:2] == ["input", "send"]
+            and parts[2] in {"up", "down", "left", "right", "ok", "back"}
+            and parts[3] in {"short", "long", "press", "release"})
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, store=None, client=None, scan_ports=scan_flipper_ports):
+        super().__init__()
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QIcon(str(files("ui").joinpath("assets", "app-icon.svg"))))
+        self.resize(1080, 680)
+        self.setMinimumSize(960, 600)
+        self.store = store or ConfigStore(APP_NAME)
+        self.settings = self.store.load_settings()
+        self.macros = self.store.load_macros()
+        self.client = client or SerialClient()
+        self.api = FlipperAPI(self.client.send_command)
+        self.rpc = RpcDisplay()
+        self.scan_ports = scan_ports
+        self.pool = QThreadPool(self)
+        self.pool.setMaxThreadCount(1)
+        self.jobs = set()
+        self.busy = False
+        self.generation = 0
+        self.closing = threading.Event()
+        self.was_connected = False
+        self.connected_port = ""
+        self.device_description = "Flipper anschließen und loslegen"
+        self.device_controls = []
+        self.browsers = []
+        self.frame_time = None
+        self.mcp_controller = MCPController(self)
+        self.mcp_bridge = LocalBridge(self.mcp_controller.dispatch, self)
+        self._system_palette = QPalette(QApplication.palette())
+        self._build()
+        self._refresh_macros()
+        self._apply_settings()
+        self._apply_mode()
+        self._apply_mcp()
+        self.scan()
+        start = "Control Center" if self.settings.get("easy_mode", True) else self.settings.get("start_module", "Control Center")
+        self.nav.setCurrentRow(MODULES.index(start) if start in MODULES else 0)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._pump)
+        self.timer.start(100)
+        self.dashboard_timer = QTimer(self)
+        self.dashboard_timer.timeout.connect(self._poll_dashboard)
+        self._configure_dashboard_timer()
+        self._update_state()
+        if self.settings.get("auto_connect") and self.settings.get("last_port") in [self.ports.itemText(i) for i in range(self.ports.count())]:
+            QTimer.singleShot(0, self.connect_device)
+
+    def _build(self):
+        root = QWidget()
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        shell = QFrame()
+        shell.setObjectName("sidebarShell")
+        shell.setFixedWidth(196)
+        side = QVBoxLayout(shell)
+        side.setContentsMargins(12, 20, 12, 12)
+        side.setSpacing(16)
+        identity = QHBoxLayout()
+        identity.setSpacing(10)
+        self.brand_mark = QLabel()
+        self.brand_mark.setFixedSize(28, 28)
+        identity.addWidget(self.brand_mark)
+        names = QVBoxLayout()
+        names.setSpacing(2)
+        brand = QLabel("Flipper Remote")
+        brand.setObjectName("brand")
+        caption = QLabel("Control Center")
+        caption.setObjectName("brandCaption")
+        names.addWidget(brand)
+        names.addWidget(caption)
+        identity.addLayout(names)
+        side.addLayout(identity)
+        self.nav = Sidebar()
+        self.nav.setObjectName("sidebar")
+        self.nav.addItems(MODULES)
+        self.nav.setSpacing(2)
+        self.nav.setAccessibleName("Module")
+        side.addWidget(self.nav, 1)
+        mode_caption = QLabel("Bedienung")
+        mode_caption.setObjectName("caption")
+        side.addWidget(mode_caption)
+        self.mode = CompactComboBox()
+        self.mode.addItems(["Easy Mode", "Alle Werkzeuge"])
+        self.mode.setAccessibleName("Bedienmodus")
+        self.mode.setCurrentIndex(0 if self.settings.get("easy_mode", True) else 1)
+        self.mode.currentIndexChanged.connect(self.change_mode)
+        side.addWidget(self.mode)
+        root_layout.addWidget(shell)
+        workspace = QWidget()
+        workspace.setObjectName("workspace")
+        main_layout = QVBoxLayout(workspace)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        toolbar = QFrame()
+        toolbar.setObjectName("toolbar")
+        toolbar.setFixedHeight(52)
+        top = QHBoxLayout(toolbar)
+        top.setContentsMargins(24, 8, 24, 8)
+        top.setSpacing(8)
+        self.connection_dot = QLabel("●")
+        self.connection_dot.setObjectName("connectionDot")
+        self.device_label = QLabel("Kein Gerät")
+        self.device_label.setObjectName("deviceName")
+        self.connection_label = QLabel("Nicht verbunden")
+        self.connection_label.setObjectName("connectionStatus")
+        top.addWidget(self.connection_dot)
+        top.addWidget(self.device_label)
+        top.addWidget(self.connection_label)
+        self.mcp_badge = QLabel("MCP aus")
+        self.mcp_badge.setObjectName("caption")
+        top.addWidget(self.mcp_badge)
+        top.addStretch()
+        self.ports = CompactComboBox()
+        self.ports.setAccessibleName("USB-Port")
+        self.ports.setMaximumWidth(260)
+        self.ports.setMinimumContentsLength(16)
+        self.scan_button = QPushButton("Suchen")
+        self.scan_button.setProperty("role", "ghost")
+        self.scan_button.clicked.connect(self.scan)
+        self.connect_button = QPushButton("Verbinden")
+        self.connect_button.setProperty("role", "primary")
+        self.connect_button.clicked.connect(self.connect_device)
+        self.disconnect_button = QPushButton("Trennen")
+        self.disconnect_button.setProperty("role", "ghost")
+        self.disconnect_button.clicked.connect(self.disconnect_device)
+        self.stop_button = QPushButton("Abbrechen")
+        self.stop_button.setProperty("role", "ghost")
+        self.stop_button.setToolTip("Laufenden CLI-Befehl mit Strg+C abbrechen")
+        self.stop_button.clicked.connect(self.interrupt)
+        for widget in [self.ports, self.scan_button, self.connect_button, self.disconnect_button, self.stop_button]:
+            top.addWidget(widget)
+        main_layout.addWidget(toolbar)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._home_page())
+        self.stack.addWidget(self._system_page())
+        self.stack.addWidget(self._remote_page())
+        self.stack.addWidget(self._browser_page("Storage", "/"))
+        self.stack.addWidget(self._browser_page("Infrared", "/ext/infrared", ".ir", "Infrared"))
+        self.stack.addWidget(self._browser_page("NFC/RFID", "/ext/nfc", ".nfc", "NFC"))
+        self.stack.addWidget(self._browser_page("Sub-GHz", "/ext/subghz", ".sub", "Sub-GHz"))
+        self.stack.addWidget(self._browser_page("BadUSB", "/ext/badusb", ".txt", "Bad KB"))
+        self.stack.addWidget(self._macros_page())
+        self.stack.addWidget(self._settings_page())
+        self.nav.currentRowChanged.connect(self._select_module)
+        main_layout.addWidget(self.stack, 1)
+        root_layout.addWidget(workspace, 1)
+        self.setCentralWidget(root)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setAccessibleName("Aktivitätsprotokoll")
+        self.log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.log.document().setMaximumBlockCount(2000)
+        dock = QDockWidget("Technisches Protokoll", self)
+        self.log_dock = dock
+        dock.setWidget(self.log)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+        dock.setMinimumHeight(100)
+        self.resizeDocks([dock], [150], Qt.Orientation.Vertical)
+        destinations = self.menuBar().addMenu("Gehe zu")
+        for index, name in enumerate(MODULES):
+            action = QAction(name, self)
+            if index < 9:
+                action.setShortcut(QKeySequence(f"Ctrl+{index + 1}"))
+            action.triggered.connect(lambda checked=False, i=index: self.nav.setCurrentRow(i))
+            destinations.addAction(action)
+        view = self.menuBar().addMenu("Ansicht")
+        view.addAction(dock.toggleViewAction())
+        clear = QAction("Protokoll leeren", self)
+        clear.triggered.connect(self.log.clear)
+        view.addAction(clear)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setFixedWidth(110)
+        self.progress.setMaximumHeight(5)
+        self.progress.hide()
+        self.statusBar().addPermanentWidget(self.progress)
+        self.statusBar().showMessage("Bereit · Flipper per USB verbinden")
+
+    def _page(self, title, subtitle):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 16)
+        layout.setSpacing(12)
+        label = QLabel(title)
+        label.setObjectName("pageTitle")
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout.addWidget(label)
+        if subtitle:
+            hint = QLabel(subtitle)
+            hint.setWordWrap(True)
+            hint.setObjectName("subtitle")
+            hint.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            layout.addWidget(hint)
+        return page, layout
+
+    def _button(self, label, callback, layout, device=True):
+        button = QPushButton(label)
+        button.clicked.connect(callback)
+        layout.addWidget(button)
+        if device:
+            self.device_controls.append(button)
+        return button
+
+    def _home_page(self):
+        page, layout = self._page("Übersicht", "")
+        layout.setSpacing(8)
+        self.dashboard = DeviceDashboard()
+        self.dashboard.refresh_requested.connect(self.refresh_dashboard)
+        self.dashboard.remote_requested.connect(lambda: self.nav.setCurrentRow(MODULES.index("Remote")))
+        layout.addWidget(self.dashboard)
+        label = QLabel("Werkzeuge")
+        label.setObjectName("sectionLabel")
+        layout.addWidget(label)
+        self.home_rows = []
+        rows = QWidget()
+        row_layout = QGridLayout(rows)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setHorizontalSpacing(24)
+        row_layout.setVerticalSpacing(0)
+        tasks = [
+            ("Live-Bedienung", "Geräte-Display, Navigation und Tastatur", "Remote", "remote"),
+            ("Fernbedienungen", "IR-Dateien auf der SD-Karte", "Infrared", "infrared"),
+            ("Dateien", "Ordner, Textvorschau und Speicherverwaltung", "Storage", "folder"),
+            ("Karten & Tags", "Gespeicherte NFC-Dateien", "NFC/RFID", "nfc"),
+            ("Funk-Signale", "Gespeicherte Sub-GHz-Dateien", "Sub-GHz", "radio"),
+            ("USB-Abläufe", "Gespeicherte Skripte", "BadUSB", "usb"),
         ]
+        for index, (title, description, module, symbol) in enumerate(tasks):
+            row = ActionRow(title, description, symbol)
+            row.clicked.connect(lambda checked=False, name=module: self.nav.setCurrentRow(MODULES.index(name)))
+            row_layout.addWidget(row, index // 2, index % 2)
+            self.home_rows.append(row)
+        row_layout.setColumnStretch(0, 1)
+        row_layout.setColumnStretch(1, 1)
+        layout.addWidget(rows)
+        layout.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
 
-        quick_actions = panel_card(
-            "Schnellaktionen",
-            "Schnellaktionen direkt vom Dashboard.",
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            "Geräteinfo",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info, "Geräteinfo geladen"), page.update()),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Vibro Test",
-                            on_click=lambda _: (
-                                guarded_call(FEATURE_SYSTEM, lambda: api.vibro(True), "Vibro an"),
-                                guarded_call(FEATURE_SYSTEM, lambda: api.vibro(False), "Vibro aus"),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Dateien anzeigen",
-                            on_click=lambda _: (guarded_call(FEATURE_STORAGE, lambda: api.storage_list("/"), "Dateien geladen"), page.update()),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Neu starten",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.reboot_normal, "Neustart ausgelöst"), page.update()),
-                            height=control_height(),
-                        ),
-                    ],
-                )
-            ],
-        )
+    def change_mode(self, index):
+        self.settings["easy_mode"] = index == 0
+        self._save(self.store.save_settings, self.settings)
+        self._apply_mode()
 
-        favorites = panel_card(
-            "Favoriten",
-            "Häufig genutzte Aktionen als direkte Launcher.",
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            "OK",
-                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("ok", "short"), "OK ausgelöst"), page.update()),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Back",
-                            on_click=lambda _: (guarded_call(FEATURE_REMOTE, lambda: api.input_send("back", "short"), "Zurück ausgelöst"), page.update()),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Makro: Status",
-                            on_click=lambda _: (run_macro_by_name("Status"), page.update()),
-                            height=control_height(),
-                        ),
-                    ],
-                )
-            ],
-        )
+    def _apply_mode(self):
+        easy = self.settings.get("easy_mode", True)
+        self.settings_mode.blockSignals(True)
+        self.settings_mode.setCurrentIndex(0 if easy else 1)
+        self.settings_mode.blockSignals(False)
+        self.mode.blockSignals(True)
+        self.mode.setCurrentIndex(0 if easy else 1)
+        self.mode.blockSignals(False)
+        self.start_module.setEnabled(not easy)
+        self.start_module.blockSignals(True)
+        self.start_module.setCurrentIndex(max(0, self.start_module.findData("Control Center" if easy else self.settings.get("start_module", "Control Center"))))
+        self.start_module.blockSignals(False)
+        for index, name in enumerate(MODULES):
+            self.nav.item(index).setHidden(easy and name in {"System", "Makros"})
+        self.nav.sections[8].setVisible(not easy)
+        easy_names = {"Control Center": "Übersicht", "Remote": "Flipper bedienen", "Storage": "Dateien", "Infrared": "Fernbedienungen", "NFC/RFID": "Karten & Tags", "Sub-GHz": "Funk-Signale", "BadUSB": "USB-Abläufe"}
+        for index, name in enumerate(MODULES):
+            title_text = easy_names.get(name, name) if easy else name
+            self.nav.item(index).setText(title_text.replace("&", "&&"))
+            self.nav.item(index).setAccessibleName(title_text)
+            title = self.stack.widget(index).findChild(QLabel, "pageTitle")
+            if title and name in easy_names:
+                title.setText(easy_names[name] if easy else name)
+        self.log_dock.setVisible(not easy)
+        self.ports.setVisible(not easy or self.ports.count() > 1)
+        self.scan_button.setVisible(not easy)
+        if easy and self.nav.currentRow() >= 0 and MODULES[self.nav.currentRow()] in {"System", "Makros"}:
+            self.nav.setCurrentRow(0)
 
-        log_card = panel_card("Aktivitäten", "Rückmeldungen für schnellen Überblick.", [mini_log_console])
+    @property
+    def connected(self):
+        return self.client.is_connected or self.rpc.is_connected
 
-        return ft.Column(
-            spacing=spacing_value(),
-            controls=[
-                ft.Text("Dashboard", size=23, weight=ft.FontWeight.BOLD),
-                ft.Text("Wähle ein Modul über Kacheln oder nutze direkte Schnellaktionen.", color=muted_color()),
-                ft.Row(wrap=True, spacing=10, run_spacing=10, controls=cards),
-                quick_actions,
-                favorites,
-                log_card,
-            ],
-        )
+    def _ensure_cli(self):
+        if self.closing.is_set() or getattr(self, "cancel_macro", threading.Event()).is_set():
+            raise InterruptedError("Aktion abgebrochen")
+        if self.rpc.is_connected:
+            self.rpc.disconnect()
+            self.client.connect(self.connected_port)
+        if not self.client.is_connected:
+            raise RuntimeError("Kein Flipper verbunden")
 
-    def build_system_module() -> ft.Control:
-        return panel_card(
-            "System & Übersicht",
-            feature_hint(FEATURE_SYSTEM),
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            "Geräteinfo",
-                            on_click=lambda _: (guarded_call(FEATURE_SYSTEM, api.device_info, "Geräteinfo geladen"), page.update()),
-                            height=control_height(),
-                        ),
-                        system_path_input,
-                        ft.OutlinedButton(
-                            "Ordner anzeigen",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_STORAGE,
-                                    lambda: api.storage_list(system_path_input.value or "/"),
-                                    f"Ordner geladen: {system_path_input.value or '/'}",
-                                ),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        ),
-                    ],
-                ),
-            ],
-        )
-
-    def build_remote_module() -> ft.Control:
-        short_buttons = {
-            "↑": "up",
-            "↓": "down",
-            "←": "left",
-            "→": "right",
-            "OK": "ok",
-            "Back": "back",
-        }
-        long_buttons = {
-            "↑ long": "up",
-            "↓ long": "down",
-            "← long": "left",
-            "→ long": "right",
-            "OK long": "ok",
-            "Back long": "back",
-        }
-
-        return panel_card(
-            "Fernsteuerung",
-            feature_hint(FEATURE_REMOTE),
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            label,
-                            on_click=lambda _, key_name=key: (
-                                guarded_call(FEATURE_REMOTE, lambda: api.input_send(key_name, "short"), f"Taste ausgelöst: {key_name}"),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        )
-                        for label, key in short_buttons.items()
-                    ],
-                ),
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.OutlinedButton(
-                            label,
-                            on_click=lambda _, key_name=key: (
-                                guarded_call(FEATURE_REMOTE, lambda: api.input_long_with_fallback(key_name), f"Langes Drücken: {key_name}"),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        )
-                        for label, key in long_buttons.items()
-                    ],
-                ),
-            ],
-        )
-
-    def on_storage_mkdir(_: ft.ControlEvent) -> None:
-        path = required_path(storage_mkdir_path.value, "Ordner-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_STORAGE, lambda: api.raw(f"storage mkdir {path}"), f"Ordner erstellt: {path}")
-        page.update()
-
-    def on_storage_remove(_: ft.ControlEvent) -> None:
-        path = required_path(storage_remove_path.value, "Lösch-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_STORAGE, lambda: api.raw(f"storage remove {path}"), f"Element gelöscht: {path}")
-        page.update()
-
-    def on_storage_read(_: ft.ControlEvent) -> None:
-        path = required_path(storage_read_path.value, "Anzeigen-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_STORAGE, lambda: api.raw(f"storage read {path}"), f"Dateiinhalt geladen: {path}")
-        page.update()
-
-    def on_ir_send(_: ft.ControlEvent) -> None:
-        path = required_path(ir_file_path.value, "IR-Datei-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_INFRARED, lambda: api.raw(f"ir tx {path}"), f"Signal gesendet: {path}")
-        page.update()
-
-    def on_ir_open(_: ft.ControlEvent) -> None:
-        path = required_path(ir_file_path.value, "IR-Datei-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_INFRARED, lambda: api.raw(f"storage read {path}"), "Dateiinhalt angezeigt")
-        page.update()
-
-    def on_nfc_emulate(_: ft.ControlEvent) -> None:
-        path = required_path(nfc_file_path.value, "NFC-Datei-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_NFC_RFID, lambda: api.raw(f"nfc emu {path}"), f"Emulation gestartet: {path}")
-        page.update()
-
-    def on_subghz_tx(_: ft.ControlEvent) -> None:
-        path = required_path(subghz_file_path.value, "Sub-GHz-Datei-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_SUBGHZ, lambda: api.raw(f"subghz tx_from_file {path}"), f"Senden gestartet: {path}")
-        page.update()
-
-    def on_subghz_open(_: ft.ControlEvent) -> None:
-        path = required_path(subghz_file_path.value, "Sub-GHz-Datei-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_SUBGHZ, lambda: api.raw(f"storage read {path}"), "Dateiinhalt angezeigt")
-        page.update()
-
-    def on_badusb_run(_: ft.ControlEvent) -> None:
-        if not badusb_confirm.value:
-            append_log("[WARN] Bestätigung fehlt")
-            notify("Bitte zuerst BadUSB-Bestätigung aktivieren", error=True)
-            page.update()
-            return
-        path = required_path(badusb_script_path.value, "BadUSB-Script-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_BADUSB, lambda: api.raw(f"badusb run {path}"), f"Ablauf gestartet: {path}")
-        page.update()
-
-    def on_badusb_open(_: ft.ControlEvent) -> None:
-        path = required_path(badusb_script_path.value, "BadUSB-Script-Pfad")
-        if not path:
-            page.update()
-            return
-        guarded_call(FEATURE_BADUSB, lambda: api.raw(f"storage read {path}"), "Ablaufinhalt angezeigt")
-        page.update()
-
-    def build_storage_module() -> ft.Control:
-        return panel_card(
-            "Storage",
-            feature_hint(FEATURE_STORAGE),
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            "Anzeigen",
-                            on_click=lambda _: (
-                                guarded_call(
-                                    FEATURE_STORAGE,
-                                    lambda: api.storage_list(storage_list_path_input.value or "/"),
-                                    f"Ordner geladen: {storage_list_path_input.value or '/'}",
-                                ),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        ),
-                        storage_list_path_input,
-                    ],
-                ),
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.OutlinedButton(
-                            "Ordner erstellen",
-                            on_click=on_storage_mkdir,
-                            height=control_height(),
-                        ),
-                        storage_mkdir_path,
-                    ],
-                ),
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.OutlinedButton(
-                            "Löschen",
-                            on_click=on_storage_remove,
-                            height=control_height(),
-                        ),
-                        storage_remove_path,
-                    ],
-                ),
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.OutlinedButton(
-                            "Inhalt anzeigen",
-                            on_click=on_storage_read,
-                            height=control_height(),
-                        ),
-                        storage_read_path,
-                    ],
-                ),
-            ],
-        )
-
-    def build_infrared_module() -> ft.Control:
-        return panel_card(
-            "Infrarot",
-            feature_hint(FEATURE_INFRARED),
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            "Signal senden",
-                            on_click=on_ir_send,
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Lernen starten",
-                            on_click=lambda _: (guarded_call(FEATURE_INFRARED, lambda: api.raw("ir rx"), "Lernmodus gestartet"), page.update()),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Dateiinhalt anzeigen",
-                            on_click=on_ir_open,
-                            height=control_height(),
-                        ),
-                    ],
-                ),
-                ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[ir_file_path]),
-            ],
-        )
-
-    def build_nfc_module() -> ft.Control:
-        return panel_card(
-            "NFC/RFID",
-            feature_hint(FEATURE_NFC_RFID),
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            "Karte erkennen",
-                            on_click=lambda _: (
-                                guarded_call(FEATURE_NFC_RFID, lambda: api.raw("nfc detect"), "Erkennung gestartet"),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Karte lesen",
-                            on_click=lambda _: (guarded_call(FEATURE_NFC_RFID, lambda: api.raw("nfc read"), "Lesen gestartet"), page.update()),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Datei emulieren",
-                            on_click=on_nfc_emulate,
-                            height=control_height(),
-                        ),
-                    ],
-                ),
-                ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[nfc_file_path]),
-            ],
-        )
-
-    def build_subghz_module() -> ft.Control:
-        return panel_card(
-            "Funk",
-            feature_hint(FEATURE_SUBGHZ),
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            "Empfang starten",
-                            on_click=lambda _: (
-                                guarded_call(FEATURE_SUBGHZ, lambda: api.raw("subghz rx"), "Empfang läuft"),
-                                page.update(),
-                            ),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Gespeichertes Signal senden",
-                            on_click=on_subghz_tx,
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Dateiinhalt anzeigen",
-                            on_click=on_subghz_open,
-                            height=control_height(),
-                        ),
-                    ],
-                ),
-                ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[subghz_file_path]),
-                ft.Text("Nur auf legalen Frequenzen nutzen.", color=ft.Colors.RED_300),
-            ],
-        )
-
-    def build_badusb_module() -> ft.Control:
-        return panel_card(
-            "BadUSB",
-            feature_hint(FEATURE_BADUSB),
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton(
-                            "Ablauf starten",
-                            on_click=on_badusb_run,
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Stoppen",
-                            on_click=lambda _: (guarded_call(FEATURE_BADUSB, lambda: api.raw("badusb stop"), "Ablauf gestoppt"), page.update()),
-                            height=control_height(),
-                        ),
-                        ft.OutlinedButton(
-                            "Ablaufinhalt anzeigen",
-                            on_click=on_badusb_open,
-                            height=control_height(),
-                        ),
-                    ],
-                ),
-                ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[badusb_script_path]),
-                badusb_confirm,
-            ],
-        )
-
-    def build_macros_module() -> ft.Control:
-        return panel_card(
-            "Makros",
-            feature_hint(FEATURE_MACROS),
-            [
-                ft.Row(wrap=True, spacing=8, controls=[macro_select, ft.OutlinedButton("Laden", on_click=load_selected_macro)]),
-                macro_name_input,
-                macro_commands_input,
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.ElevatedButton("Speichern", on_click=save_macro, height=control_height()),
-                        ft.OutlinedButton("Löschen", on_click=delete_macro, height=control_height()),
-                        ft.OutlinedButton("Ausführen", on_click=run_macro, height=control_height()),
-                    ],
-                ),
-            ],
-        )
-
-    def rebuild_module_panel() -> None:
-        feature_key = module_to_feature[selected_module]
-        if not is_enabled(feature_key):
-            module_panel_content.content = disabled_feature_panel(selected_module, feature_key)
-            return
-
-        if selected_module == "System":
-            module_panel_content.content = build_system_module()
-        elif selected_module == "Remote":
-            module_panel_content.content = build_remote_module()
-        elif selected_module == "Storage":
-            module_panel_content.content = build_storage_module()
-        elif selected_module == "Infrared":
-            module_panel_content.content = build_infrared_module()
-        elif selected_module == "NFC/RFID":
-            module_panel_content.content = build_nfc_module()
-        elif selected_module == "Sub-GHz":
-            module_panel_content.content = build_subghz_module()
-        elif selected_module == "BadUSB":
-            module_panel_content.content = build_badusb_module()
+    def toggle_live(self):
+        if self.rpc.is_connected:
+            def stop():
+                self._ensure_cli()
+            self.submit("Live-Ansicht beenden", stop, lambda _: self.screen.clear())
         else:
-            module_panel_content.content = build_macros_module()
+            def start():
+                self.client.disconnect()
+                try:
+                    self.rpc.connect(self.connected_port)
+                    if self.closing.is_set() or self.cancel_macro.is_set():
+                        self.rpc.disconnect()
+                        raise InterruptedError("Aktion abgebrochen")
+                except Exception:
+                    if not self.closing.is_set() and not self.cancel_macro.is_set():
+                        self.client.connect(self.connected_port)
+                    raise
+            self.submit("Live-Ansicht starten", start)
 
-    def build_module_view() -> ft.Control:
-        return ft.Column(
-            spacing=spacing_value(),
-            controls=[
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    controls=[
-                        ft.Row(
-                            spacing=8,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                ft.OutlinedButton("Zurück", on_click=back_to_home, height=control_height()),
-                                ft.Text(f"Modul: {selected_module}", size=23, weight=ft.FontWeight.BOLD),
-                            ],
-                        ),
-                        ft.Row(
-                            spacing=10,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                scan_status_text,
-                                ft.OutlinedButton("Dateien aktualisieren", on_click=refresh_file_lists, height=control_height()),
-                            ],
-                        ),
-                    ],
-                ),
-                module_tabs,
-                module_panel_content,
-            ],
-        )
-
-    def on_scan(_: ft.ControlEvent) -> None:
-        perform_scan()
-        page.update()
-
-    def on_connect(_: ft.ControlEvent) -> None:
-        connect_selected_port()
-        if serial_client.is_connected:
-            refresh_file_lists()
-        page.update()
-
-    def on_disconnect(_: ft.ControlEvent) -> None:
-        disconnect()
-        page.update()
-
-    def on_expert_mode_change(_: ft.ControlEvent) -> None:
-        settings["expert_mode"] = bool(expert_mode_checkbox.value)
-        config_store.save_settings(settings)
-        nonlocal capabilities
-        capabilities = build_capabilities(bool(settings.get("expert_mode", False)))
-        append_log("[INFO] Expert-Mode aktualisiert")
-        rebuild_module_panel()
-        refresh_main_view()
-        page.update()
-
-    def on_theme_change(_: ft.ControlEvent) -> None:
-        settings["theme"] = theme_dropdown.value or "dark"
-        config_store.save_settings(settings)
-        apply_theme()
-        refresh_main_view()
-        page.update()
-
-    def on_accent_change(_: ft.ControlEvent) -> None:
-        settings["accent"] = accent_dropdown.value or "orange"
-        config_store.save_settings(settings)
-        refresh_main_view()
-        page.update()
-
-    def on_density_change(_: ft.ControlEvent) -> None:
-        settings["density"] = density_dropdown.value or "comfort"
-        config_store.save_settings(settings)
-        refresh_main_view()
-        page.update()
-
-    def on_start_module_change(_: ft.ControlEvent) -> None:
-        nonlocal selected_module
-        value = start_module_dropdown.value or "System"
-        if value in module_order:
-            selected_module = value
-            settings["start_module"] = value
-            module_tabs.selected_index = module_order.index(value)
-            config_store.save_settings(settings)
-            rebuild_module_panel()
-            page.update()
-
-    def reset_settings(_: ft.ControlEvent) -> None:
-        nonlocal selected_module, capabilities
-        settings.clear()
-        settings.update(
-            {
-                "last_port": "",
-                "expert_mode": False,
-                "theme": "dark",
-                "accent": "orange",
-                "density": "comfort",
-                "start_module": "System",
-            }
-        )
-        config_store.save_settings(settings)
-        capabilities = build_capabilities(False)
-        selected_module = "System"
-        expert_mode_checkbox.value = False
-        theme_dropdown.value = "dark"
-        accent_dropdown.value = "orange"
-        density_dropdown.value = "comfort"
-        start_module_dropdown.value = "System"
-        module_tabs.selected_index = 0
-        apply_theme()
-        rebuild_module_panel()
-        refresh_main_view()
-        append_log("[INFO] Settings zurückgesetzt")
-        page.update()
-
-    def reset_macros(_: ft.ControlEvent) -> None:
-        macros.clear()
-        macros.update({"Status": ["device_info", "storage list /"], "Quick Reboot": ["power reboot"]})
-        config_store.save_macros(macros)
-        refresh_macro_dropdown()
-        if "Status" in macros:
-            macro_select.value = "Status"
-            macro_name_input.value = "Status"
-            macro_commands_input.value = "\n".join(macros["Status"])
-        append_log("[INFO] Makros zurückgesetzt")
-        page.update()
-
-    def build_settings_view() -> ft.Control:
-        connection_card = panel_card(
-            "Verbindung",
-            "USB-Port scannen und Flipper verbinden.",
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        port_dropdown,
-                        ft.ElevatedButton("Scan", on_click=on_scan, height=control_height()),
-                        ft.ElevatedButton("Connect", on_click=on_connect, height=control_height()),
-                        ft.OutlinedButton("Disconnect", on_click=on_disconnect, height=control_height()),
-                        status_chip,
-                    ],
-                )
-            ],
-        )
-
-        ui_card = panel_card(
-            "UI & Sicherheit",
-            "Theme, Dichte, Startmodul und Expert-Einstellungen.",
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[theme_dropdown, accent_dropdown, density_dropdown, start_module_dropdown],
-                ),
-                expert_mode_checkbox,
-            ],
-        )
-
-        debug_card = panel_card(
-            "Aktivitäten",
-            "Status und Rückmeldungen vom Flipper.",
-            [
-                ft.Row(
-                    spacing=8,
-                    controls=[
-                        ft.OutlinedButton(
-                            "Verlauf leeren",
-                            on_click=lambda _: (log_lines.clear(), update_log_views(), page.update()),
-                            height=control_height(),
-                        ),
-                    ],
-                ),
-                log_console,
-            ],
-        )
-
-        danger_card = panel_card(
-            "Danger Zone",
-            "Setzt lokale App-Einstellungen oder Makros zurück.",
-            [
-                ft.Row(
-                    wrap=True,
-                    spacing=8,
-                    run_spacing=8,
-                    controls=[
-                        ft.OutlinedButton("Settings reset", on_click=reset_settings, height=control_height()),
-                        ft.OutlinedButton("Makros reset", on_click=reset_macros, height=control_height()),
-                    ],
-                )
-            ],
-        )
-
-        return ft.Column(
-            spacing=spacing_value(),
-            controls=[
-                ft.Text("Einstellungen", size=23, weight=ft.FontWeight.BOLD),
-                connection_card,
-                ui_card,
-                debug_card,
-                danger_card,
-            ],
-        )
-
-    def refresh_main_view() -> None:
-        main_nav_container.content = build_main_nav()
-        selected = selected_main_view
-        if selected == 0:
-            main_content.content = build_home_view()
-        elif selected == 1:
-            rebuild_module_panel()
-            main_content.content = build_module_view()
+    def send_key(self, key):
+        long = self.long_press.isChecked()
+        if self.rpc.is_connected:
+            self.submit("Taste senden", lambda: self.rpc.input(key, long))
         else:
-            main_content.content = build_settings_view()
+            self.command(f"input send {key} {'long' if long else 'short'}")
 
-    def on_module_tab_change(_: ft.ControlEvent) -> None:
-        nonlocal selected_module
-        idx = module_tabs.selected_index if module_tabs.selected_index is not None else 0
-        selected_module = module_order[idx]
-        settings["start_module"] = selected_module
-        start_module_dropdown.value = selected_module
-        config_store.save_settings(settings)
-        rebuild_module_panel()
-        refresh_main_view()
-        page.update()
+    def _system_page(self):
+        page, layout = self._page("System", "Geräteinformationen und Firmware vom verbundenen Flipper.")
+        row = QHBoxLayout()
+        self._button("Geräteinfo laden", lambda: self.command("device_info", self._show_info), row)
+        self._button("Laufende App", lambda: self.command("loader info", self._show_output), row)
+        self._button("Neu starten…", self.reboot, row)
+        row.addStretch()
+        layout.addLayout(row)
+        self.info = QTreeWidget()
+        self.info.setHeaderLabels(["Eigenschaft", "Wert"])
+        self.info.setRootIsDecorated(False)
+        self.info.setColumnWidth(0, 280)
+        self.info.setAccessibleName("Geräteinformationen")
+        layout.addWidget(self.info)
+        return page
 
-    module_tabs.on_change = on_module_tab_change
-    expert_mode_checkbox.on_change = on_expert_mode_change
-    theme_dropdown.on_change = on_theme_change
-    accent_dropdown.on_change = on_accent_change
-    density_dropdown.on_change = on_density_change
-    start_module_dropdown.on_change = on_start_module_change
+    def _remote_page(self):
+        page, layout = self._page("Remote", "Sieh das Geräte-Display live und bediene den Flipper mit Tasten oder deiner Tastatur.")
+        host = QWidget()
+        host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        host.setMaximumHeight(320)
+        body = QHBoxLayout(host)
+        body.setContentsMargins(0, 8, 0, 0)
+        body.setSpacing(24)
+        display = QVBoxLayout()
+        self.screen = ScreenView()
+        self.screen.setFixedHeight(256)
+        display.setSpacing(8)
+        display.addWidget(self.screen)
+        live_row = QHBoxLayout()
+        self.live_button = QPushButton("Live-Ansicht starten")
+        self.live_button.setProperty("role", "primary")
+        self.live_button.clicked.connect(self.toggle_live)
+        self.device_controls.append(self.live_button)
+        live_row.addWidget(self.live_button)
+        self.live_status = QLabel("Display noch nicht verbunden")
+        self.live_status.setObjectName("caption")
+        live_row.addWidget(self.live_status)
+        live_row.addStretch()
+        display.addLayout(live_row)
+        body.addLayout(display, 3)
+        controls = QVBoxLayout()
+        group = QGroupBox("Tasten")
+        grid = QGridLayout(group)
+        grid.setSpacing(8)
+        grid.setContentsMargins(0, 4, 0, 0)
+        for label, key, row, column in [("↑", "up", 0, 1), ("←", "left", 1, 0), ("OK", "ok", 1, 1), ("→", "right", 1, 2), ("↓", "down", 2, 1), ("Zurück", "back", 3, 1)]:
+            button = QPushButton(label)
+            button.setAccessibleName({"up": "Nach oben", "down": "Nach unten", "left": "Nach links", "right": "Nach rechts", "ok": "OK", "back": "Zurück"}[key])
+            button.setObjectName("remoteKey" if key != "back" else "remoteBack")
+            button.setProperty("center", key == "ok")
+            button.setFixedSize(44, 40) if key != "back" else button.setFixedSize(112, 28)
+            button.clicked.connect(lambda checked=False, k=key: self.send_key(k))
+            if key == "back":
+                grid.addWidget(button, row, 0, 1, 3, Qt.AlignmentFlag.AlignHCenter)
+            else:
+                grid.addWidget(button, row, column)
+            self.device_controls.append(button)
+        controls.addWidget(group)
+        self.long_press = QCheckBox("Langer Tastendruck")
+        controls.addWidget(self.long_press)
+        keyboard_hint = QLabel("Pfeiltasten · Enter · Escape")
+        keyboard_hint.setObjectName("subtitle")
+        controls.addWidget(keyboard_hint)
+        controls.addStretch()
+        body.addLayout(controls, 1)
+        layout.addWidget(host)
+        layout.addStretch()
+        for shortcut, key in [("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right"), ("Return", "ok"), ("Backspace", "back"), ("Escape", "back")]:
+            binding = QShortcut(QKeySequence(shortcut), page)
+            binding.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            binding.setAutoRepeat(False)
+            binding.activated.connect(lambda k=key: self.send_key(k))
+        return page
 
-    page.add(
-        ft.Column(
-            spacing=spacing_value(),
-            controls=[
-                header,
-                subtitle,
-                ft.Divider(height=1, color=accent_color()),
-                main_nav_container,
-                main_content,
-            ],
-        )
-    )
+    def _browser_page(self, title, root, suffix=None, app_name=None):
+        subtitle = "Dateien auswählen und auf dem Flipper öffnen." if app_name else "Ordner öffnen, Dateien ansehen und verwalten."
+        page, layout = self._page(title, subtitle)
+        browser = FileBrowser(root, suffix, app_name)
+        browser.browse.connect(lambda path, b=browser: self.browse(b, path))
+        browser.read_file.connect(lambda entry, b=browser: self.read_file(b, entry))
+        browser.remove_entry.connect(lambda entry, b=browser: self.remove_entry(b, entry))
+        browser.create_directory.connect(lambda path, b=browser: self.mkdir(b, path))
+        browser.open_file.connect(lambda entry, b=browser: self.open_file(b, entry))
+        self.browsers.append(browser)
+        self.device_controls.append(browser)
+        layout.addWidget(browser)
+        return page
 
-    refresh_macro_dropdown()
-    if macros:
-        first_macro = sorted(macros.keys())[0]
-        macro_select.value = first_macro
-        macro_name_input.value = first_macro
-        macro_commands_input.value = "\n".join(macros[first_macro])
+    def _macros_page(self):
+        page, layout = self._page("Makros", "Befehle laufen nacheinander. Der nächste startet erst nach der Geräteantwort. Abbrechen stoppt die Sequenz.")
+        self.macro_select = CompactComboBox()
+        self.macro_select.setAccessibleName("Gespeichertes Makro")
+        self.macro_select.currentTextChanged.connect(self.load_macro)
+        layout.addWidget(self.macro_select)
+        self.macro_name = QLineEdit()
+        self.macro_name.setPlaceholderText("Name für das Makro")
+        self.macro_name.setAccessibleName("Makro-Name")
+        layout.addWidget(self.macro_name)
+        self.macro_commands = QPlainTextEdit()
+        self.macro_commands.setPlaceholderText("Ein CLI-Befehl pro Zeile")
+        self.macro_commands.setAccessibleName("Makro-Befehle")
+        layout.addWidget(self.macro_commands)
+        row = QHBoxLayout()
+        self._button("Speichern", self.save_macro, row, False)
+        self._button("Neu", self.new_macro, row, False)
+        self._button("Löschen…", self.delete_macro, row, False)
+        self._button("Ausführen", self.run_macro, row)
+        row.addStretch()
+        layout.addLayout(row)
+        return page
 
-    perform_scan()
-    update_connection_status()
-    refresh_main_view()
-    page.update()
+    def _settings_page(self):
+        page, layout = self._page("Einstellungen", "")
+        self.settings_tabs = SettingsTabs(self, MODULES)
+        layout.addWidget(self.settings_tabs, 1)
+        return page
 
-    def on_window_event(event: ft.WindowEvent) -> None:
-        if event.data == "close":
-            serial_client.disconnect()
+    def save_mcp_preferences(self):
+        self.settings.update(mcp_enabled=self.mcp_panel.enabled.isChecked(),
+                             mcp_control=self.mcp_panel.permission.currentIndex() == 1)
+        self._save(self.store.save_settings, self.settings)
+        self._apply_mcp()
 
-    page.on_window_event = on_window_event
+    def _apply_mcp(self):
+        error = None
+        try:
+            if self.settings.get("mcp_enabled"):
+                self.mcp_bridge.start()
+            else:
+                self.mcp_bridge.stop()
+        except Exception as exc:
+            error = str(exc)
+            self._error("MCP: " + error)
+        self.mcp_panel.set_state(self.mcp_bridge.running, error)
+        self.mcp_badge.setText("MCP · " + self.mcp_panel.permission.currentText() if self.mcp_bridge.running else "MCP aus")
+        self.mcp_badge.setToolTip(error or "KI-Anbindung unter Einstellungen verwalten")
 
-    async def pump_logs() -> None:
-        while True:
-            lines = serial_client.pop_logs()
-            if lines:
-                for line in lines:
-                    append_log(line)
-                    process_scan_line(line)
-                page.update()
-            finish_scan_if_idle()
-            await asyncio.sleep(0.2)
+    def _select_module(self, index):
+        self.stack.setCurrentIndex(index)
+        if index == 0:
+            self._poll_dashboard()
+        if 3 <= index <= 7 and self.connected and not self.busy:
+            browser = self.browsers[index - 3]
+            self.browse(browser, browser.current_path)
 
-    page.run_task(pump_logs)
+    def _apply_settings(self):
+        mode = self.settings.get("theme", "system")
+        dark = mode == "dark" or (mode == "system" and self._system_palette.color(QPalette.ColorRole.Window).lightness() < 128)
+        self.tokens = colors(dark)
+        QApplication.setPalette(theme_palette(self.tokens))
+        self.setStyleSheet(stylesheet(self.tokens))
+        self.brand_mark.setPixmap(icon("device", self.tokens['accent']).pixmap(QSize(28, 28)))
+        for index, symbol in enumerate(MODULE_ICONS):
+            self.nav.item(index).setIcon(icon(symbol, self.tokens['secondary'], self.tokens['accent']))
+            self.nav.item(index).setIconSize(QSize(16, 16))
+        for row in self.home_rows:
+            row.tokens = self.tokens
+            row.update()
+        self.screen.stage_color = self.tokens['surface']
+        self.screen.update()
+        for browser in self.browsers:
+            browser.expert = self.settings.get("expert_mode") is True
+            browser.set_theme(self.tokens)
+            browser.update_actions()
+        self._update_connection_identity()
+
+    def _update_connection_identity(self):
+        self.connection_dot.setStyleSheet("color: " + ("#2ea043" if self.connected else self.tokens['muted']) + ";")
+
+    def save_preferences(self, *args):
+        self.settings.update(theme=["system", "light", "dark"][self.theme.currentIndex()],
+                             start_module=self.settings.get("start_module", "Control Center") if self.settings.get("easy_mode") else self.start_module.currentData(),
+                             expert_mode=self.expert.isChecked(),
+                             auto_connect=self.auto_connect.isChecked(),
+                             dashboard_refresh_seconds=self.refresh_interval.currentData())
+        self._save(self.store.save_settings, self.settings)
+        self._apply_settings()
+        self._configure_dashboard_timer()
+
+    def _configure_dashboard_timer(self):
+        seconds = self.settings.get("dashboard_refresh_seconds", 10)
+        self.dashboard.refresh_seconds = seconds
+        self.dashboard._update_freshness()
+        if hasattr(self, "dashboard_timer"):
+            if seconds:
+                self.dashboard_timer.start(seconds * 1000)
+            else:
+                self.dashboard_timer.stop()
+
+    def _save(self, writer, value):
+        try:
+            writer(value)
+            return True
+        except OSError as exc:
+            self._error(f"Lokale Daten konnten nicht gespeichert werden: {exc}")
+            return False
+
+    def scan(self):
+        try:
+            ports = self.scan_ports()
+        except Exception as exc:
+            self._error(str(exc))
+            return
+        selected = self.ports.currentText() or self.settings.get("last_port", "")
+        self.ports.clear()
+        self.ports.addItems(ports)
+        if selected in ports:
+            self.ports.setCurrentText(selected)
+        self.settings_tabs.sync_ports()
+        self._apply_mode()
+        self._update_state()
+
+    def submit(self, label, work, success=None, require_connection=True, failure=None):
+        if self.busy or self.closing.is_set():
+            return False
+        if require_connection and not self.connected:
+            self._error("Kein Flipper verbunden")
+            return False
+        self.busy = True
+        self.cancel_macro = threading.Event()
+        generation = self.generation
+        job = Job(work)
+        self.jobs.add(job)
+        def finished(result, error):
+            self.jobs.discard(job)
+            self.busy = False
+            if self.closing.is_set():
+                self.rpc.disconnect()
+                self.client.disconnect()
+                self.close()
+                return
+            if generation == self.generation:
+                if error:
+                    self._error(str(error))
+                    if failure:
+                        failure(error)
+                else:
+                    self.statusBar().showMessage(f"Abgeschlossen: {label}", 6000)
+                    if success:
+                        success(result)
+            elif failure:
+                failure(RuntimeError("Geräteverbindung getrennt; Ergebnis vor Wiederholung prüfen"))
+            self._update_state()
+        job.signals.finished.connect(finished, Qt.ConnectionType.QueuedConnection)
+        self.statusBar().showMessage(label + " …")
+        self._update_state()
+        self.pool.start(job)
+        return True
+
+    def command(self, command, success=None):
+        def work():
+            self._ensure_cli()
+            return self.client.send_command(command)
+        labels = {"device_info": "Geräteinformationen laden", "storage read": "Dateivorschau laden",
+                  "storage mkdir": "Ordner erstellen", "storage remove": "Datei löschen",
+                  "input send": "Taste senden", "loader open": "Geräte-App öffnen", "loader info": "Laufende Geräte-App"}
+        label = next((value for prefix, value in labels.items() if command.startswith(prefix)), "Befehl ausführen")
+        return self.submit(label, work, success)
+
+    def connect_device(self):
+        if not self.ports.currentText():
+            self.scan()
+        port = self.ports.currentText()
+        if not port:
+            self._error("Kein USB-Port gefunden. Flipper anschließen und Suchen klicken.")
+            return
+        def work():
+            try:
+                self.client.connect(port)
+                if self.closing.is_set() or self.cancel_macro.is_set():
+                    self.client.disconnect()
+                    raise InterruptedError("Verbindung abgebrochen")
+                return read_device_status(self.client.send_command, self.cancel_macro.is_set)
+            except Exception:
+                self.client.disconnect()
+                raise
+        def connected(status):
+            self.connected_port = port
+            self.settings["last_port"] = port
+            self._save(self.store.save_settings, self.settings)
+            self._show_status(status)
+        self.submit("Flipper verbinden", work, connected, require_connection=False)
+
+    def _poll_dashboard(self):
+        if self.settings.get("dashboard_refresh_seconds", 10) and self.stack.currentIndex() == 0 and self.client.is_connected and not self.rpc.is_connected and not self.busy:
+            self.refresh_dashboard()
+
+    def refresh_dashboard(self):
+        # Telemetry never switches the serial owner or interrupts a live screen.
+        if not self.client.is_connected or self.rpc.is_connected:
+            return False
+        return self.submit("Gerätestatus aktualisieren",
+                           lambda: read_device_status(self.client.send_command, self.cancel_macro.is_set),
+                           self._show_status)
+
+    def _show_status(self, status):
+        self._show_info("\n".join(f"{key}: {value}" for key, value in status.device.items()))
+        self.dashboard.show_status(status)
+        if not self.client.is_connected:
+            self._clear_device()
+
+    def disconnect_device(self):
+        self.generation += 1
+        if hasattr(self, "cancel_macro"):
+            self.cancel_macro.set()
+        self.rpc.disconnect(graceful=False)
+        self.client.disconnect()
+        self._clear_device()
+        self._update_state()
+        self.statusBar().showMessage("Verbindung getrennt")
+
+    def interrupt(self):
+        if hasattr(self, "cancel_macro"):
+            self.cancel_macro.set()
+        try:
+            if self.rpc.is_connected:
+                self.rpc.disconnect(graceful=False)
+            else:
+                self.client.interrupt()
+            self.statusBar().showMessage("Abbruch angefordert …")
+        except Exception as exc:
+            self._error(str(exc))
+
+    def _show_info(self, response):
+        self.info.clear()
+        values = {}
+        for line in response.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                values[key.strip()] = value.strip()
+                self.info.addTopLevelItem(QTreeWidgetItem([key.strip(), value.strip()]))
+        self.device_label.setText(values.get("hardware_name", "Flipper Zero"))
+        self.device_description = " · ".join(filter(None, [values.get("hardware_name"), values.get("firmware_origin_fork"), values.get("firmware_version"), "USB verbunden"]))
+
+    def _show_output(self, response):
+        if response:
+            self.statusBar().showMessage(response[:240], 15000)
+
+    def browse(self, browser, path):
+        def loaded(entries):
+            browser.show_entries(path, entries)
+        def work():
+            self._ensure_cli()
+            return self.api.list_directory(path)
+        self.submit(f"Ordner laden: {path}", work, loaded)
+
+    def read_file(self, browser, entry):
+        if not entry or entry.is_dir:
+            return
+        if entry.size is not None and entry.size > 128_000:
+            self._error("Vorschau auf 128 KB begrenzt. Bitte eine kleinere Datei wählen.")
+            return
+        self.command(f"storage read {quote_path(entry.path)}", browser.preview.setPlainText)
+
+    def remove_entry(self, browser, entry):
+        if not entry or not self._confirm("Vom Flipper löschen?", f"{entry.path}\n\nDiese Löschung kann nicht rückgängig gemacht werden."):
+            return
+        self.command(f"storage remove {quote_path(entry.path)}", lambda _: self.browse(browser, browser.current_path))
+
+    def mkdir(self, browser, path):
+        name, accepted = QInputDialog.getText(self, "Neuer Ordner", "Name im aktuellen Ordner:")
+        if not accepted:
+            return
+        if not name.strip() or name in {".", ".."} or any(c in name for c in '/"\r\n\x00'):
+            self._error("Bitte einen Ordnernamen ohne Schrägstrich, Anführungszeichen oder Steuerzeichen angeben.")
+            return
+        target = posixpath.join(path, name.strip())
+        self.command(f"storage mkdir {quote_path(target)}", lambda _: self.browse(browser, path))
+
+    def open_file(self, browser, entry):
+        if not entry or not self.expert.isChecked():
+            self._error("Zum Öffnen auf dem Flipper ist Expert-Mode erforderlich.")
+            return
+        if not self._confirm("Datei auf dem Flipper öffnen?", f"{entry.path}\n\nStartet {browser.app_name} auf dem Gerät. Die Geräte-App kann je nach Dateityp direkt Aktionen ausführen."):
+            return
+        # loader passes the remainder as the application's path argument (not CLI tokens).
+        def opened(_):
+            self.nav.setCurrentRow(MODULES.index("Remote"))
+            self.toggle_live()
+        self.command(f'loader open "{browser.app_name}" {entry.path}', opened)
+
+    def reboot(self):
+        if not self._confirm("Flipper neu starten?", "Die USB-Verbindung wird dabei getrennt."):
+            return
+        def work():
+            self._ensure_cli()
+            try:
+                self.client.send_command("power reboot", timeout=3)
+            except (TimeoutError, RuntimeError):
+                pass  # A reboot can disconnect before returning a prompt.
+            finally:
+                self.client.disconnect()
+        self.submit("Neustart angefordert", work, lambda _: self._clear_device())
+
+    def _refresh_macros(self, selected=None):
+        self.macro_select.blockSignals(True)
+        self.macro_select.clear()
+        self.macro_select.addItems(sorted(self.macros))
+        if selected in self.macros:
+            self.macro_select.setCurrentText(selected)
+        self.macro_select.blockSignals(False)
+        self.load_macro(self.macro_select.currentText())
+
+    def load_macro(self, name):
+        self.macro_name.setText(name)
+        self.macro_commands.setPlainText("\n".join(self.macros.get(name, [])))
+
+    def new_macro(self):
+        self.macro_select.setCurrentIndex(-1)
+        self.macro_name.clear()
+        self.macro_commands.clear()
+        self.macro_name.setFocus()
+
+    def save_macro(self):
+        name = self.macro_name.text().strip()
+        commands = [line.strip() for line in self.macro_commands.toPlainText().splitlines() if line.strip()]
+        if not name or not commands:
+            self._error("Name und mindestens ein Befehl sind erforderlich.")
+            return
+        if name in self.macros and not self._confirm("Makro überschreiben?", name):
+            return
+        updated = {**self.macros, name: commands}
+        if self._save(self.store.save_macros, updated):
+            self.macros = updated
+            self._refresh_macros(name)
+
+    def delete_macro(self):
+        name = self.macro_select.currentText()
+        if name not in self.macros or not self._confirm("Makro löschen?", name):
+            return
+        updated = {key: value for key, value in self.macros.items() if key != name}
+        if self._save(self.store.save_macros, updated):
+            self.macros = updated
+            self._refresh_macros()
+
+    def run_macro(self):
+        commands = [line.strip() for line in self.macro_commands.toPlainText().splitlines() if line.strip()]
+        if not commands:
+            self._error("Das Makro ist leer.")
+            return
+        expert = self.expert.isChecked()
+        if any(not macro_allowed(command, expert) for command in commands):
+            self._error("Dieses Makro enthält erweiterte Befehle. Expert-Mode ist erforderlich.")
+            return
+        if expert and not self._confirm("Makro ausführen?", "Die eingegebenen CLI-Befehle werden auf dem Flipper ausgeführt."):
+            return
+        def work():
+            for command in commands:
+                if self.cancel_macro.is_set():
+                    return "Makro abgebrochen"
+                self._ensure_cli()
+                self.client.send_command(command)
+            return f"{len(commands)} Schritte abgeschlossen"
+        self.submit("Makro ausführen", work, self._show_output)
+
+    def _confirm(self, title, message):
+        return QMessageBox.question(self, title, message, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+
+    def _error(self, message):
+        self.log.appendPlainText(f"[ERROR] {message}")
+        self.statusBar().showMessage(message, 20000)
+
+    def _clear_device(self):
+        self.info.clear()
+        self.dashboard.clear()
+        self.device_label.setText("Kein Gerät")
+        self.screen.clear()
+        self.frame_time = None
+        for browser in self.browsers:
+            browser.clear()
+
+    def _update_state(self):
+        connected = self.connected
+        self.connection_label.setText("Verbunden" if connected else "Nicht verbunden")
+        self.ports.setEnabled(not connected and not self.busy)
+        self.scan_button.setEnabled(not connected and not self.busy)
+        self.connect_button.setEnabled(not connected and not self.busy)
+        self.connect_button.setVisible(not connected)
+        self._update_connection_identity()
+        self.disconnect_button.setEnabled(connected)
+        self.stop_button.setEnabled(connected and self.busy)
+        self.stop_button.setVisible(self.busy)
+        self.disconnect_button.setVisible(connected)
+        self.live_button.setText("Live-Ansicht beenden" if self.rpc.is_connected else "Live-Ansicht starten")
+        self.live_status.setText("Live über USB" if self.rpc.is_connected else "Live-Ansicht ist aus")
+        self.progress.setVisible(self.busy)
+        for control in self.device_controls:
+            control.setEnabled(connected and not self.busy)
+        self.dashboard.set_connection(connected, self.busy, self.rpc.is_connected)
+        self.settings_tabs.update_device()
+
+    def _pump(self):
+        for line in self.client.pop_logs():
+            self.log.appendPlainText(line)
+        frame = self.rpc.pop_frame()
+        if frame:
+            self.screen.set_frame(*frame)
+            self.frame_time = datetime.now().astimezone()
+        connected = self.connected
+        if self.busy and not connected:
+            return
+        if self.was_connected and not connected:
+            self._clear_device()
+            if self.rpc.error:
+                self._error("Display-Verbindung getrennt: " + self.rpc.error)
+        if self.was_connected != connected:
+            self._update_state()
+        self.was_connected = connected
+
+    def closeEvent(self, event):
+        self.closing.set()
+        self.mcp_bridge.stop()
+        self.disconnect_device()
+        if self.jobs:
+            self.statusBar().showMessage("Verbindung wird beendet …")
+            event.ignore()
+            return
+        self.timer.stop()
+        self.dashboard_timer.stop()
+        event.accept()
+
+
+def run():
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setStyle("Fusion")
+    app.styleHints().setTabFocusBehavior(Qt.TabFocusBehavior.TabFocusAllControls)
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+    font.setPixelSize(13)
+    app.setFont(font)
+    app.setApplicationName(APP_NAME)
+    app.setOrganizationName("FlipperRemote")
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())

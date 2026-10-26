@@ -1,37 +1,17 @@
-# -*- mode: python ; coding: utf-8 -*-
-
-block_cipher = None
+# Build on Linux. Keep libraries separate so Qt remains replaceable.
+from pathlib import Path
+import sys
+root = Path(SPECPATH).resolve().parents[1]
+sys.path.insert(0, str(root / 'packaging'))
+from release_spec import inputs
 
 a = Analysis(
-    ['src/main.py'],
-    pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=['flet', 'serial', 'serial.tools.list_ports'],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
+    [str(root / 'src/main.py')], pathex=[str(root / 'src')],
+    binaries=[], datas=inputs(root), hiddenimports=['serial.tools.list_ports', 'PySide6.QtSvg'],
+    hookspath=[], hooksconfig={}, runtime_hooks=[],
+    excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'tkinter'],
     noarchive=False,
 )
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='flipper-remote',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-)
+pyz = PYZ(a.pure)
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='flipper-remote', console=True)
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='flipper-remote')
