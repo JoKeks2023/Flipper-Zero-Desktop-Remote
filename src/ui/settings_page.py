@@ -7,7 +7,7 @@ from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout,
-    QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget,
+    QGridLayout, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget,
     QVBoxLayout, QWidget,
 )
 from importlib.resources import files
@@ -15,7 +15,7 @@ from importlib.resources import files
 from ui.controls import CompactComboBox
 from ui.mcp_panel import MCPPanel
 
-VERSION = "0.2.0"
+from main import VERSION
 PROJECT = "https://github.com/JoKeks2023/Flipper-Zero-Desktop-Remote"
 
 
@@ -37,6 +37,7 @@ class SettingsTabs(QTabWidget):
         layout.addWidget(text("Darstellung & Bedienung", "cardTitle"))
         form = QFormLayout()
         form.setVerticalSpacing(12)
+        form.setHorizontalSpacing(32)
         w.theme = CompactComboBox()
         w.theme.setAccessibleName("Darstellung")
         w.theme.addItems(["System", "Hell", "Dunkel"])
@@ -63,7 +64,9 @@ class SettingsTabs(QTabWidget):
         w.refresh_interval.setCurrentIndex(w.refresh_interval.findData(w.settings["dashboard_refresh_seconds"]))
         form.addRow("Gerätestatus", w.refresh_interval)
         layout.addLayout(form)
-        layout.addWidget(text("Änderungen werden sofort gespeichert. Im Easy Mode stehen die häufigen Aufgaben im Vordergrund; unter Alle Werkzeuge sind zusätzlich System und Makros verfügbar."))
+        for control in (w.theme, w.settings_mode, w.start_module, w.refresh_interval):
+            control.setMaximumWidth(300)
+        layout.addWidget(text("Änderungen werden sofort gespeichert. Easy Mode zeigt die häufigen Aufgaben; Alle Werkzeuge ergänzt System und Makros.", "caption"))
         layout.addSpacing(12)
         layout.addWidget(text("Lokale Daten & Diagnose", "cardTitle"))
         layout.addWidget(text("Einstellungen und Makros werden auf diesem Computer gespeichert. Die Diagnose enthält App-, System- und Verbindungsstatus, keine Gerätekennung oder Dateiinhalte."))
@@ -126,9 +129,14 @@ class SettingsTabs(QTabWidget):
 
     def page(self, title):
         content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(16, 20, 16, 16)
+        outer = QVBoxLayout(content)
+        outer.setContentsMargins(0, 24, 0, 16)
+        body = QWidget()
+        body.setMaximumWidth(700)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
+        outer.addWidget(body, 1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -149,15 +157,21 @@ class SettingsTabs(QTabWidget):
         layout.addWidget(text("Die App enthält keine Nutzungsanalyse. Einstellungen und Makros bleiben lokal. Bei MCP-Anfragen gehen die angeforderten Geräteinformationen an deinen KI-Client; dieser bestimmt die Weitergabe an ein Modell."))
         layout.addSpacing(8)
         layout.addWidget(text("Credits", "cardTitle"))
-        for name, contribution in (
+        credits = QGridLayout()
+        credits.setHorizontalSpacing(24)
+        credits.setVerticalSpacing(8)
+        for row, (name, contribution) in enumerate((
             ("Flipper Devices", "Flipper Zero und das öffentliche Geräteprotokoll"),
             ("Momentum", "Firmware und Community-Erweiterungen"),
             ("Qt / PySide6 & Shiboken", "Native Oberfläche und Python-Anbindung"),
             ("pySerial", "Serielle USB-Kommunikation"),
             ("Model Context Protocol", "Offizielles Python-SDK für die KI-Anbindung"),
             ("Mitwirkende & Community", "Fehlerberichte, Ideen und Beiträge"),
-        ):
-            layout.addWidget(text(name + " · " + contribution))
+        )):
+            credits.addWidget(text(name, "detailValue"), row, 0)
+            credits.addWidget(text(contribution), row, 1)
+        credits.setColumnStretch(1, 1)
+        layout.addLayout(credits)
         layout.addSpacing(8)
         layout.addWidget(text("© 2026 JoKeks2023 · Projektlizenz: MIT. Abhängigkeiten behalten ihre eigenen Lizenzen.", "caption"))
         row = QHBoxLayout()

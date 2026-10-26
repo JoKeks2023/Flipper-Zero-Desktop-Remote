@@ -37,5 +37,5 @@ py-modules = ["main"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-ui = ["legal/*.txt"]
+ui = ["legal/*.txt", "assets/*.svg"]
 

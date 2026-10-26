@@ -7,7 +7,8 @@ import threading
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QSize, QThreadPool, QTimer
-from PySide6.QtGui import QAction, QColor, QFontDatabase, QPalette, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QColor, QFontDatabase, QIcon, QPalette, QKeySequence, QShortcut
+from importlib.resources import files
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDockWidget, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow):
     def __init__(self, store=None, client=None, scan_ports=scan_flipper_ports):
         super().__init__()
         self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QIcon(str(files("ui").joinpath("assets", "app-icon.svg"))))
         self.resize(1080, 680)
         self.setMinimumSize(960, 600)
         self.store = store or ConfigStore(APP_NAME)
@@ -328,7 +330,9 @@ class MainWindow(QMainWindow):
         self.nav.sections[8].setVisible(not easy)
         easy_names = {"Control Center": "Übersicht", "Remote": "Flipper bedienen", "Storage": "Dateien", "Infrared": "Fernbedienungen", "NFC/RFID": "Karten & Tags", "Sub-GHz": "Funk-Signale", "BadUSB": "USB-Abläufe"}
         for index, name in enumerate(MODULES):
-            self.nav.item(index).setText(easy_names.get(name, name) if easy else name)
+            title_text = easy_names.get(name, name) if easy else name
+            self.nav.item(index).setText(title_text.replace("&", "&&"))
+            self.nav.item(index).setAccessibleName(title_text)
             title = self.stack.widget(index).findChild(QLabel, "pageTitle")
             if title and name in easy_names:
                 title.setText(easy_names[name] if easy else name)

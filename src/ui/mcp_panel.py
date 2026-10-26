@@ -2,7 +2,6 @@
 from datetime import datetime
 import json
 import sys
-import shutil
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QFontDatabase
@@ -68,8 +67,7 @@ class MCPPanel(QGroupBox):
         command = sys.executable
         args = ["-m", "flipper_mcp.server", "--socket", self.socket_path]
         if getattr(sys, "frozen", False):
-            command = shutil.which("flipper-remote-mcp") or "flipper-remote-mcp"
-            args = ["--socket", self.socket_path]
+            args = ["--mcp", "--socket", self.socket_path]
         if self.client.currentIndex() == 0:
             text = "[mcp_servers.flipper]\ncommand = " + json.dumps(command) + "\nargs = " + json.dumps(args) + "\n"
         else:

@@ -1,14 +1,15 @@
 """Compact desktop theme. Widget roles share these semantic surface tokens."""
 from PySide6.QtGui import QColor, QPalette
+from importlib.resources import files
 
 
 def colors(dark):
     if dark:
-        return dict(bg='#121214', side='#19191c', surface='#1e1e22', hover='#29292d',
-                    input='#242428', border='#34343a', text='#d1d1d6', strong='#f3f3f5',
+        return dict(bg='#171719', side='#1e1e21', surface='#232326', hover='#2c2c30',
+                    input='#27272b', border='#38383e', text='#d1d1d6', strong='#f3f3f5',
                     secondary='#a6a6ae', muted='#86868f', selected='#33271e',
                     accent='#e8b080', solid='#a44e13', focus='#c78047')
-    return dict(bg='#ffffff', side='#f5f5f6', surface='#f2f2f3', hover='#e9e9eb',
+    return dict(bg='#fcfcfd', side='#f3f3f5', surface='#f0f0f3', hover='#e9e9ed',
                 input='#f2f2f3', border='#d3d3d7', text='#3a3a3f', strong='#17171a',
                 secondary='#5c5c63', muted='#78787f', selected='#f6eade',
                 accent='#914611', solid='#a44e13', focus='#b56a2d')
@@ -28,8 +29,9 @@ def palette(tokens):
 
 
 def stylesheet(c):
+    check = str(files('ui').joinpath('assets', 'check.svg'))
     return f'''
-        QWidget {{ color: {c['text']}; font-size: 13px; }}
+        QWidget {{ color: {c['text']}; font-size: 13px; font-weight: 400; }}
         QMainWindow, QWidget#workspace {{ background: {c['bg']}; }}
         QFrame#sidebarShell {{ background: {c['side']}; }}
         QFrame#toolbar {{ background: {c['bg']}; border-bottom: 1px solid {c['border']}; }}
@@ -56,8 +58,9 @@ def stylesheet(c):
         QDialog {{ background: {c['bg']}; }}
         QTabWidget::pane {{ border: 1px solid {c['border']}; }}
         QTabWidget#settingsTabs::pane {{ border: none; border-top: 1px solid {c['border']}; }}
-        QTabBar::tab {{ background: {c['surface']}; color: {c['secondary']}; padding: 7px 12px; }}
-        QTabBar::tab:selected {{ background: {c['selected']}; color: {c['accent']}; }}
+        QTabBar::tab {{ background: transparent; color: {c['secondary']}; padding: 9px 14px; border-bottom: 2px solid transparent; }}
+        QTabBar::tab:hover {{ color: {c['strong']}; background: {c['surface']}; }}
+        QTabBar::tab:selected {{ color: {c['strong']}; border-bottom-color: {c['accent']}; }}
         QWidget#sidebar {{ background: transparent; }}
         QWidget#sidebar QPushButton {{ background: transparent; text-align: left; border: none; padding: 7px 10px; border-radius: 6px; font-size: 12px; font-weight: 400; }}
         QWidget#sidebar QPushButton:hover {{ background: {c['hover']}; }}
@@ -95,6 +98,9 @@ def stylesheet(c):
         QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0; }}
         QCheckBox {{ spacing: 6px; font-size: 12px; }}
         QCheckBox::indicator {{ width: 14px; height: 14px; }}
+        QCheckBox::indicator:unchecked {{ background: {c['input']}; border: 1px solid {c['muted']}; border-radius: 3px; }}
+        QCheckBox::indicator:checked {{ background: {c['solid']}; border: 1px solid {c['solid']}; border-radius: 3px; image: url("{check}"); }}
+        QCheckBox::indicator:focus {{ border: 1px solid {c['focus']}; }}
         QStatusBar {{ background: {c['bg']}; color: {c['muted']}; border-top: 1px solid {c['border']}; font-size: 11px; }}
         QStatusBar::item {{ border: none; }}
         QDockWidget {{ font-size: 11px; color: {c['muted']}; }}

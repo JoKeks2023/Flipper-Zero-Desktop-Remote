@@ -1,0 +1,71 @@
+name: Desktop packages
+on:
+  push:
+    branches: [main, 'codex/**']
+    tags: ['v*']
+    paths-ignore: ['docs/**', '*.md']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: macos-arm64
+          - os: macos-15-intel
+            platform: macos-x86_64
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0
+      - run: python -m pip install -e '.[dev,mcp]'
+      - name: Regression tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -v
+      - name: Collect redistributable notices
+        run: python packaging/collect_licenses.py
+      - name: Render app icon
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python packaging/create_icons.py
+      - name: Build macOS bundle
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
+        run: pyinstaller --noconfirm packaging/macos/flipper_remote.spec
+      - name: Build Linux directory
+        if: runner.os == 'Linux'
+        run: pyinstaller --noconfirm packaging/linux/flipper_remote.spec
+      - name: Check packaged GUI and MCP on macOS
+        if: runner.os == 'macOS'
+        run: python packaging/smoke_bundle.py 'dist/Flipper Zero Desktop Remote.app/Contents/MacOS/flipper-remote'
+      - name: Check packaged GUI and MCP on Linux
+        if: runner.os == 'Linux'
+        run: python packaging/smoke_bundle.py dist/flipper-remote/flipper-remote
+      - name: Archive macOS
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p release
+          ditto -c -k --sequesterRsrc --keepParent 'dist/Flipper Zero Desktop Remote.app' release/Flipper-Remote-0.2.0-${{ matrix.platform }}.zip
+      - name: Archive Linux
+        if: runner.os == 'Linux'
+        run: |
+          cp packaging/linux/flipper-remote.desktop packaging/assets/flipper-remote.png dist/flipper-remote/
+          mkdir -p release
+          tar -C dist -czf release/Flipper-Remote-0.2.0-${{ matrix.platform }}.tar.gz flipper-remote
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Flipper-Remote-${{ matrix.platform }}
+          path: release/*
+          retention-days: 14

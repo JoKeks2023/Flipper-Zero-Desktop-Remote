@@ -10,9 +10,9 @@ from persistence.paths import ensure_app_dirs
 
 
 class ConfigStore:
-    def __init__(self, app_name: str) -> None:
+    def __init__(self, app_name: str, base_dir: Path | None = None) -> None:
         self.app_name = app_name
-        self.base_dir = ensure_app_dirs(app_name)
+        self.base_dir = base_dir if base_dir is not None else ensure_app_dirs(app_name)
         self.settings_file = self.base_dir / "settings.json"
         self.macros_file = self.base_dir / "macros.json"
 
