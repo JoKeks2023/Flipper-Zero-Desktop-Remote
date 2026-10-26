@@ -69,3 +69,12 @@ jobs:
           name: Flipper-Remote-${{ matrix.platform }}
           path: release/*
           retention-days: 14
+      - name: Retain packaging diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ matrix.platform }}
+          path: |
+            build/**/warn-*.txt
+            build/release-licenses/BUILD-ENVIRONMENT.json
+          retention-days: 7

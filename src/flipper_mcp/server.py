@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from typing import Any, Literal
 
 from flipper_mcp.bridge_client import BridgeClient
@@ -91,7 +92,9 @@ def main():
     args = parser.parse_args()
     try:
         server = create_server(BridgeClient(args.socket))
-    except ImportError:
+    except ImportError as exc:
+        if getattr(sys, "frozen", False):
+            parser.exit(1, f'MCP-Komponente im App-Paket konnte nicht geladen werden: {exc}\n')
         parser.exit(1, 'MCP benötigt Python 3.11+ und das Extra: pip install -e ".[mcp]"\n')
     server.run(transport="stdio")
 
