@@ -25,6 +25,7 @@ class DeviceDashboard(QWidget):
         self.status = DeviceStatus()
         self.online = False
         self.paused = False
+        self.refresh_seconds = 10
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
@@ -181,7 +182,8 @@ class DeviceDashboard(QWidget):
             if stamp:
                 text += " · Abgefragt " + stamp
         elif stamp:
-            text = "Aktualisiert " + stamp + " · Automatisch alle 10 s auf dieser Seite"
+            text = "Aktualisiert " + stamp
+            text += f" · Automatisch alle {self.refresh_seconds} s auf dieser Seite" if self.refresh_seconds else " · Manuelle Aktualisierung"
         else:
             text = "Messwerte werden geladen …"
         self.freshness.setText(text)

@@ -4,6 +4,7 @@ import posixpath
 import shlex
 import sys
 import threading
+from datetime import datetime
 
 from PySide6.QtCore import Qt, QSize, QThreadPool, QTimer
 from PySide6.QtGui import QAction, QColor, QFontDatabase, QPalette, QKeySequence, QShortcut
@@ -30,6 +31,9 @@ from ui.icons import icon, MODULE_ICONS
 from ui.action_row import ActionRow
 from ui.controls import CompactComboBox
 from ui.dashboard import DeviceDashboard
+from ui.mcp_controller import MCPController
+from ui.settings_page import SettingsTabs
+from flipper_mcp.ipc import LocalBridge
 from ui.theme import colors, palette as theme_palette, stylesheet
 
 APP_NAME = "Flipper Zero Desktop Remote"
@@ -84,11 +88,15 @@ class MainWindow(QMainWindow):
         self.device_description = "Flipper anschließen und loslegen"
         self.device_controls = []
         self.browsers = []
+        self.frame_time = None
+        self.mcp_controller = MCPController(self)
+        self.mcp_bridge = LocalBridge(self.mcp_controller.dispatch, self)
         self._system_palette = QPalette(QApplication.palette())
         self._build()
         self._refresh_macros()
         self._apply_settings()
         self._apply_mode()
+        self._apply_mcp()
         self.scan()
         start = "Control Center" if self.settings.get("easy_mode", True) else self.settings.get("start_module", "Control Center")
         self.nav.setCurrentRow(MODULES.index(start) if start in MODULES else 0)
@@ -97,8 +105,10 @@ class MainWindow(QMainWindow):
         self.timer.start(100)
         self.dashboard_timer = QTimer(self)
         self.dashboard_timer.timeout.connect(self._poll_dashboard)
-        self.dashboard_timer.start(10_000)
+        self._configure_dashboard_timer()
         self._update_state()
+        if self.settings.get("auto_connect") and self.settings.get("last_port") in [self.ports.itemText(i) for i in range(self.ports.count())]:
+            QTimer.singleShot(0, self.connect_device)
 
     def _build(self):
         root = QWidget()
@@ -162,6 +172,9 @@ class MainWindow(QMainWindow):
         top.addWidget(self.connection_dot)
         top.addWidget(self.device_label)
         top.addWidget(self.connection_label)
+        self.mcp_badge = QLabel("MCP aus")
+        self.mcp_badge.setObjectName("caption")
+        top.addWidget(self.mcp_badge)
         top.addStretch()
         self.ports = CompactComboBox()
         self.ports.setAccessibleName("USB-Port")
@@ -300,6 +313,16 @@ class MainWindow(QMainWindow):
 
     def _apply_mode(self):
         easy = self.settings.get("easy_mode", True)
+        self.settings_mode.blockSignals(True)
+        self.settings_mode.setCurrentIndex(0 if easy else 1)
+        self.settings_mode.blockSignals(False)
+        self.mode.blockSignals(True)
+        self.mode.setCurrentIndex(0 if easy else 1)
+        self.mode.blockSignals(False)
+        self.start_module.setEnabled(not easy)
+        self.start_module.blockSignals(True)
+        self.start_module.setCurrentIndex(max(0, self.start_module.findData("Control Center" if easy else self.settings.get("start_module", "Control Center"))))
+        self.start_module.blockSignals(False)
         for index, name in enumerate(MODULES):
             self.nav.item(index).setHidden(easy and name in {"System", "Makros"})
         self.nav.sections[8].setVisible(not easy)
@@ -467,32 +490,30 @@ class MainWindow(QMainWindow):
         return page
 
     def _settings_page(self):
-        page, layout = self._page("Einstellungen", "Einstellungen und Makros bleiben lokal auf diesem Computer.")
-        form = QFormLayout()
-        self.theme = CompactComboBox()
-        self.theme.addItems(["System", "Hell", "Dunkel"])
-        self.theme.setCurrentIndex({"system": 0, "light": 1, "dark": 2}.get(self.settings.get("theme"), 0))
-        self.theme.currentIndexChanged.connect(self.save_preferences)
-        form.addRow("Darstellung", self.theme)
-        self.start_module = CompactComboBox()
-        self.start_module.addItems(MODULES)
-        self.start_module.setCurrentText(self.settings.get("start_module", "System"))
-        self.start_module.currentTextChanged.connect(self.save_preferences)
-        form.addRow("Startmodul", self.start_module)
-        self.expert = QCheckBox("Expert-Mode")
-        self.expert.setChecked(self.settings.get("expert_mode") is True)
-        self.expert.toggled.connect(self.save_preferences)
-        form.addRow("Erweiterte Aktionen", self.expert)
-        layout.addLayout(form)
-        hint = QLabel("Expert-Mode erlaubt das Öffnen von IR/NFC/Sub-GHz/BadUSB-Dateien in der Geräte-App sowie freie CLI-Makros. Ohne Expert-Mode sind Makros auf lesende Abfragen und Navigation begrenzt.")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-        path = QLabel(f"Lokale Daten: {self.store.base_dir}")
-        path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        path.setWordWrap(True)
-        layout.addWidget(path)
-        layout.addStretch()
+        page, layout = self._page("Einstellungen", "")
+        self.settings_tabs = SettingsTabs(self, MODULES)
+        layout.addWidget(self.settings_tabs, 1)
         return page
+
+    def save_mcp_preferences(self):
+        self.settings.update(mcp_enabled=self.mcp_panel.enabled.isChecked(),
+                             mcp_control=self.mcp_panel.permission.currentIndex() == 1)
+        self._save(self.store.save_settings, self.settings)
+        self._apply_mcp()
+
+    def _apply_mcp(self):
+        error = None
+        try:
+            if self.settings.get("mcp_enabled"):
+                self.mcp_bridge.start()
+            else:
+                self.mcp_bridge.stop()
+        except Exception as exc:
+            error = str(exc)
+            self._error("MCP: " + error)
+        self.mcp_panel.set_state(self.mcp_bridge.running, error)
+        self.mcp_badge.setText("MCP · " + self.mcp_panel.permission.currentText() if self.mcp_bridge.running else "MCP aus")
+        self.mcp_badge.setToolTip(error or "KI-Anbindung unter Einstellungen verwalten")
 
     def _select_module(self, index):
         self.stack.setCurrentIndex(index)
@@ -527,9 +548,24 @@ class MainWindow(QMainWindow):
         self.connection_dot.setStyleSheet("color: " + ("#2ea043" if self.connected else self.tokens['muted']) + ";")
 
     def save_preferences(self, *args):
-        self.settings.update(theme=["system", "light", "dark"][self.theme.currentIndex()], start_module=self.start_module.currentText(), expert_mode=self.expert.isChecked())
+        self.settings.update(theme=["system", "light", "dark"][self.theme.currentIndex()],
+                             start_module=self.settings.get("start_module", "Control Center") if self.settings.get("easy_mode") else self.start_module.currentData(),
+                             expert_mode=self.expert.isChecked(),
+                             auto_connect=self.auto_connect.isChecked(),
+                             dashboard_refresh_seconds=self.refresh_interval.currentData())
         self._save(self.store.save_settings, self.settings)
         self._apply_settings()
+        self._configure_dashboard_timer()
+
+    def _configure_dashboard_timer(self):
+        seconds = self.settings.get("dashboard_refresh_seconds", 10)
+        self.dashboard.refresh_seconds = seconds
+        self.dashboard._update_freshness()
+        if hasattr(self, "dashboard_timer"):
+            if seconds:
+                self.dashboard_timer.start(seconds * 1000)
+            else:
+                self.dashboard_timer.stop()
 
     def _save(self, writer, value):
         try:
@@ -550,10 +586,11 @@ class MainWindow(QMainWindow):
         self.ports.addItems(ports)
         if selected in ports:
             self.ports.setCurrentText(selected)
+        self.settings_tabs.sync_ports()
         self._apply_mode()
         self._update_state()
 
-    def submit(self, label, work, success=None, require_connection=True):
+    def submit(self, label, work, success=None, require_connection=True, failure=None):
         if self.busy or self.closing.is_set():
             return False
         if require_connection and not self.connected:
@@ -575,10 +612,14 @@ class MainWindow(QMainWindow):
             if generation == self.generation:
                 if error:
                     self._error(str(error))
+                    if failure:
+                        failure(error)
                 else:
                     self.statusBar().showMessage(f"Abgeschlossen: {label}", 6000)
                     if success:
                         success(result)
+            elif failure:
+                failure(RuntimeError("Geräteverbindung getrennt; Ergebnis vor Wiederholung prüfen"))
             self._update_state()
         job.signals.finished.connect(finished, Qt.ConnectionType.QueuedConnection)
         self.statusBar().showMessage(label + " …")
@@ -621,7 +662,7 @@ class MainWindow(QMainWindow):
         self.submit("Flipper verbinden", work, connected, require_connection=False)
 
     def _poll_dashboard(self):
-        if self.stack.currentIndex() == 0 and self.client.is_connected and not self.rpc.is_connected and not self.busy:
+        if self.settings.get("dashboard_refresh_seconds", 10) and self.stack.currentIndex() == 0 and self.client.is_connected and not self.rpc.is_connected and not self.busy:
             self.refresh_dashboard()
 
     def refresh_dashboard(self):
@@ -804,6 +845,7 @@ class MainWindow(QMainWindow):
         self.dashboard.clear()
         self.device_label.setText("Kein Gerät")
         self.screen.clear()
+        self.frame_time = None
         for browser in self.browsers:
             browser.clear()
 
@@ -825,6 +867,7 @@ class MainWindow(QMainWindow):
         for control in self.device_controls:
             control.setEnabled(connected and not self.busy)
         self.dashboard.set_connection(connected, self.busy, self.rpc.is_connected)
+        self.settings_tabs.update_device()
 
     def _pump(self):
         for line in self.client.pop_logs():
@@ -832,6 +875,7 @@ class MainWindow(QMainWindow):
         frame = self.rpc.pop_frame()
         if frame:
             self.screen.set_frame(*frame)
+            self.frame_time = datetime.now().astimezone()
         connected = self.connected
         if self.busy and not connected:
             return
@@ -845,6 +889,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.closing.set()
+        self.mcp_bridge.stop()
         self.disconnect_device()
         if self.jobs:
             self.statusBar().showMessage("Verbindung wird beendet …")
@@ -858,6 +903,7 @@ class MainWindow(QMainWindow):
 def run():
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.styleHints().setTabFocusBehavior(Qt.TabFocusBehavior.TabFocusAllControls)
     font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
     font.setPixelSize(13)
     app.setFont(font)

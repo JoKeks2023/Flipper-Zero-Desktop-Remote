@@ -18,6 +18,9 @@ macOS und Linux. Keine WebView, kein Flet, kein lokaler Webserver.
 - **System:** Geräte- und Firmwareinformationen, laufende App abfragen, Neustart.
 - **Makros:** lokale Befehlsfolgen, Antworten abwarten, abbrechen, speichern/löschen.
 - **Einstellungen:** System/Hell/Dunkel, Startmodul, Easy Mode und Expert-Mode getrennt.
+- **MCP:** KI-Clients lesen Geräte-/Power-Daten, Dateien und Display über dieselbe
+  Verbindung. Tasten und Live-Ansicht werden separat freigegeben. [Einrichtung](docs/mcp.md).
+- **Über:** Version, Credits, Projekt-/Supportlinks, MIT-Lizenz und Open-Source-Hinweise.
 
 Der Desktop ersetzt nicht die Flipper-Hardware: USB-Kabel, Empfangsreichweite,
 Antenne, IR-Ausrichtung und gerätespezifische Grenzen bleiben bestehen. Nicht jede
@@ -49,6 +52,9 @@ open "build/Flipper Zero Desktop Remote.app"
 Dieser Launcher benötigt das Checkout und dessen `.venv`; er ist kein eigenständig
 verteilbares Release. Standalone-Builds: [Build-Anleitung](docs/building.md).
 
+MCP zusätzlich installieren: `python -m pip install -e '.[mcp]'` mit Python 3.11+.
+Danach unter **Einstellungen → KI-Anbindung** aktivieren und Client-Konfiguration kopieren.
+
 ## Verifikation und Grenzen
 
 Am 26.10.2026 mit angeschlossenem Momentum **mntm-012** auf macOS geprüft:
@@ -70,4 +76,5 @@ Kein Nachweis für Senden, Emulieren oder BadUSB-Ausführung durch diese Abnahme
 [Installation](docs/installation.md) · [Benutzung](docs/usage.md) ·
 [Module](docs/modules.md) · [Konfiguration](docs/configuration.md) ·
 [Build](docs/building.md) · [Mitwirken](docs/contributing.md) ·
+[MCP](docs/mcp.md) · [MIT-Lizenz](LICENSE) · [Credits und Abhängigkeiten](THIRD_PARTY_NOTICES.md) ·
 [Umsetzung und Abnahme](docs/tasks/T-0001_usable-core/00_brief.md)

@@ -3,6 +3,9 @@ name = "flipper-zero-desktop-remote"
 version = "0.2.0"
 description = "Desktop remote for Flipper Zero (Momentum) using Qt Widgets"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{name = "JoKeks2023"}]
 requires-python = ">=3.10,<3.16"
 dependencies = [
   "PySide6-Essentials==6.12.0",
@@ -11,12 +14,19 @@ dependencies = [
 
 [project.scripts]
 flipper-remote = "main:main"
+flipper-remote-mcp = "flipper_mcp.server:main"
+
+[project.urls]
+Source = "https://github.com/JoKeks2023/Flipper-Zero-Desktop-Remote"
+Issues = "https://github.com/JoKeks2023/Flipper-Zero-Desktop-Remote/issues"
+Releases = "https://github.com/JoKeks2023/Flipper-Zero-Desktop-Remote/releases"
 
 [project.optional-dependencies]
 dev = ["pyinstaller>=6,<7"]
+mcp = ["mcp==2.3.0; python_version >= '3.11'"]
 
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -25,4 +35,7 @@ py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+ui = ["legal/*.txt"]
 

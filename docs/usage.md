@@ -14,7 +14,8 @@
 
 Die Startseite liest den Gerätestatus beim Verbinden und bei Rückkehr zur Übersicht.
 Solange sie sichtbar ist, werden die Messwerte bei freier Verbindung alle 10 Sekunden
-neu abgefragt. **Aktualisieren** liest sie sofort erneut; der Zeitpunkt steht unter
+neu abgefragt (unter Einstellungen auf 5/10/30 Sekunden oder manuell änderbar).
+**Aktualisieren** liest sie sofort erneut; der Zeitpunkt steht unter
 den Werten. **Alle Geräteinfos…** öffnet eine Momentaufnahme aller gemeldeten Rohwerte
 in den Bereichen Gerät, Akku & Strom und Power-Diagnose.
 
@@ -30,6 +31,10 @@ Easy Mode blendet Portdetails (außer bei mehreren Geräten), Systemdetails,
 freie Makros und das technische Protokoll aus. Expert-Mode wird dadurch nicht aktiviert.
 **Alle Werkzeuge** zeigt zusätzlich System und Makros. Unter Ansicht lässt sich das
 technische Protokoll einblenden. Fehler erscheinen auch unten in der Statusleiste.
+
+Unter **Einstellungen** sind Allgemein, Gerät, KI-Anbindung und Über getrennt.
+Die automatische Verbindung zum letzten USB-Port ist optional. **Über** enthält
+Credits, Lizenzhinweise und Links zum Projekt. MCP: [Einrichtung und Tools](mcp.md).
 
 ## Dateien
 

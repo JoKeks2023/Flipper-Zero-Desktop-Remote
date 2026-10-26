@@ -3,7 +3,7 @@ from pathlib import Path
 root = Path(SPECPATH).resolve().parents[1]
 a = Analysis(
     [str(root / 'src/main.py')], pathex=[str(root / 'src')],
-    binaries=[], datas=[], hiddenimports=['serial.tools.list_ports'],
+    binaries=[], datas=[(str(root / 'src/ui/legal'), 'ui/legal')], hiddenimports=['serial.tools.list_ports'],
     hookspath=[], hooksconfig={}, runtime_hooks=[],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets'],
     noarchive=False,

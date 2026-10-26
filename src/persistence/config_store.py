@@ -25,12 +25,18 @@ class ConfigStore:
             "accent": "orange",
             "density": "comfort",
             "start_module": "Control Center",
+            "mcp_enabled": False,
+            "mcp_control": False,
+            "auto_connect": False,
+            "dashboard_refresh_seconds": 10,
         }
         settings = {**default_settings, **self._load_json(self.settings_file, default_settings)}
         for key, default in default_settings.items():
             if type(settings.get(key)) is not type(default):
                 settings[key] = default
         settings["expert_mode"] = settings.get("expert_mode") is True
+        if settings["dashboard_refresh_seconds"] not in {0, 5, 10, 30}:
+            settings["dashboard_refresh_seconds"] = 10
         return settings
 
     def save_settings(self, settings: dict[str, Any]) -> None:

@@ -43,7 +43,7 @@ class FakeClient:
         if command.startswith('storage list'):
             return '\t[D] nested\n\t[F] Canon RC-6.ir 131b'
         if command.startswith('storage read'):
-            return 'Filetype: IR signals file\nVersion: 1'
+            return 'Size: 131\nFiletype: IR signals file\nVersion: 1'
         return ''
 
 
@@ -209,6 +209,51 @@ class UITest(unittest.TestCase):
     def test_accessibility_toggle_navigates_to_destination(self):
         self.window.nav.item(MODULES.index('Remote')).setChecked(True)
         self.assertEqual(self.window.stack.currentIndex(), MODULES.index('Remote'))
+
+    def test_general_settings_persist_refresh_and_sync_both_mode_controls(self):
+        self.connect()
+        self.window.refresh_interval.setCurrentIndex(self.window.refresh_interval.findData(0))
+        self.assertFalse(self.window.dashboard_timer.isActive())
+        self.assertIn('Manuelle Aktualisierung', self.window.dashboard.freshness.text())
+        self.client.commands.clear()
+        self.window._poll_dashboard()
+        self.assertEqual(self.client.commands, [])
+        self.window.refresh_interval.setCurrentIndex(self.window.refresh_interval.findData(30))
+        self.assertEqual(self.window.dashboard_timer.interval(), 30_000)
+        self.assertEqual(self.store.load_settings()['dashboard_refresh_seconds'], 30)
+        self.window.settings_mode.setCurrentIndex(1)
+        self.assertEqual(self.window.mode.currentIndex(), 1)
+        self.assertTrue(self.window.start_module.isEnabled())
+        self.window.start_module.setCurrentIndex(self.window.start_module.findData('Remote'))
+        self.assertEqual(self.store.load_settings()['start_module'], 'Remote')
+        self.window.mode.setCurrentIndex(0)
+        self.assertEqual(self.window.settings_mode.currentIndex(), 0)
+        self.assertFalse(self.window.start_module.isEnabled())
+        self.assertEqual(self.window.start_module.currentData(), 'Control Center')
+        self.window.theme.setCurrentIndex(1)
+        self.assertEqual(self.store.load_settings()['start_module'], 'Remote')
+
+    def test_autoconnect_only_uses_the_previously_selected_port(self):
+        self.window.close()
+        self.store.save_settings({'auto_connect': True, 'last_port': '/dev/test'})
+        self.window = MainWindow(self.store, FakeClient(), lambda: ['/dev/test'])
+        self.wait_idle()
+        self.assertTrue(self.window.connected)
+        self.window.close()
+        self.window = MainWindow(self.store, FakeClient(), lambda: ['/dev/other'])
+        APP.processEvents()
+        self.assertFalse(self.window.connected)
+
+    def test_diagnostics_omit_identifiers_paths_and_file_contents(self):
+        import json
+        self.window.settings['last_port'] = '/dev/private-device-identifier'
+        self.window.settings_tabs.copy_diagnostics()
+        payload = APP.clipboard().text()
+        data = json.loads(payload)
+        self.assertEqual(data['version'], '0.2.0')
+        self.assertNotIn('/dev/private', payload)
+        self.assertNotIn('device', data)
+        self.assertNotIn('macros', data)
 
     def test_keyboard_remote_sends_input_only_in_remote_view(self):
         from PySide6.QtCore import Qt

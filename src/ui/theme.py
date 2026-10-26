@@ -19,7 +19,8 @@ def palette(tokens):
     for role, key in [('Window', 'bg'), ('WindowText', 'text'), ('Base', 'bg'),
                       ('AlternateBase', 'surface'), ('Text', 'text'), ('Button', 'surface'),
                       ('ButtonText', 'text'), ('Highlight', 'selected'),
-                      ('HighlightedText', 'strong'), ('ToolTipBase', 'surface'), ('ToolTipText', 'text')]:
+                      ('HighlightedText', 'strong'), ('ToolTipBase', 'surface'), ('ToolTipText', 'text'),
+                      ('Link', 'accent'), ('LinkVisited', 'accent')]:
         p.setColor(getattr(QPalette.ColorRole, role), QColor(tokens[key]))
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(tokens['muted']))
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(tokens['muted']))
@@ -54,6 +55,7 @@ def stylesheet(c):
         QProgressBar#batteryLevel::chunk {{ background: {c['accent']}; border-radius: 2px; }}
         QDialog {{ background: {c['bg']}; }}
         QTabWidget::pane {{ border: 1px solid {c['border']}; }}
+        QTabWidget#settingsTabs::pane {{ border: none; border-top: 1px solid {c['border']}; }}
         QTabBar::tab {{ background: {c['surface']}; color: {c['secondary']}; padding: 7px 12px; }}
         QTabBar::tab:selected {{ background: {c['selected']}; color: {c['accent']}; }}
         QWidget#sidebar {{ background: transparent; }}
