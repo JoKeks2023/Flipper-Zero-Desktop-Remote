@@ -6,7 +6,7 @@ Dadurch bleiben Oberfläche und KI-Zugriff synchron; kein zweiter Prozess öffne
 
 ## Einrichtung
 
-Python 3.11+ für den optionalen MCP-Server:
+In den Desktop-Paketen ist MCP enthalten. Für eine Quellinstallation: Python 3.11+ und das optionale Extra:
 
 ```bash
 python -m pip install -e '.[mcp]'
@@ -57,8 +57,7 @@ Das ist kein binärgetreuer Datei-Download.
 - Der KI-Client entscheidet, ob Ergebnisse an ein Modell weitergegeben werden.
 
 Die Quellinstallation und der Entwicklungslauncher verwenden denselben Python-Interpreter.
-Für ein künftig eingefrorenes Desktop-Paket muss der stdio-Server separat im System
-installiert sein; ein eigenständiges MCP-Binary wurde noch nicht paketiert/geprüft.
+Im Desktop-Paket startet der Client dieselbe ausführbare Datei mit `--mcp`; eine zusätzliche Python- oder MCP-Installation ist nicht nötig. Die Konfiguration erst nach dem Verschieben der App an ihren endgültigen Ort kopieren. Nach einem späteren Umzug den Programmpfad im Client aktualisieren.
 
 Quellen: [offizielles SDK](https://py.sdk.modelcontextprotocol.io/),
 [stdio-Spezifikation](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).

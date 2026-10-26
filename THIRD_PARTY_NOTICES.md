@@ -17,10 +17,12 @@ relicense third-party components. Retain their notices when redistributing them.
 - Python — Python Software Foundation and contributors, PSF License Agreement
   and incorporated notices. https://docs.python.org/3/license.html
 
-The installed distributions contain their own license texts and additional
-dependency notices. A binary distributor must include the notices belonging to
-the actual bundled Qt plugins, runtime, SDK dependencies and other bundled code.
-This source notice is not a complete inventory of an unbuilt standalone package.
+Release packages include a `licenses/` directory with installed distribution notices,
+upstream Qt license/attribution files and a versioned build-environment manifest.
+This manifest is a superset, including build tools. See
+[Binary components and matching sources](docs/binary-components.md) for locations,
+source links and instructions for replacing the dynamically loaded Qt libraries.
+This source overview is not itself the complete notice inventory.
 
 ## Device ecosystem
 

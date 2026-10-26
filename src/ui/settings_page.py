@@ -175,7 +175,7 @@ class SettingsTabs(QTabWidget):
         layout.addSpacing(8)
         layout.addWidget(text("© 2026 JoKeks2023 · Projektlizenz: MIT. Abhängigkeiten behalten ihre eigenen Lizenzen.", "caption"))
         row = QHBoxLayout()
-        notices = QPushButton("Lizenzen & Open-Source-Hinweise")
+        notices = QPushButton("Lizenzen && Open-Source-Hinweise")
         notices.clicked.connect(self.show_licenses)
         row.addWidget(notices)
         row.addStretch()
